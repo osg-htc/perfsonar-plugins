@@ -46,9 +46,6 @@ fi
 echo "Initialising ..."
 /usr/bin/omd stop
 
-echo "Starting crond ..."
-/usr/sbin/crond -m off -p -s
-
 if [[ -d /opt/omd/sites/etf/etc/nagios/conf.d/wlcg/ ]]; then
     rm -rf /opt/omd/sites/etf/etc/nagios/conf.d/wlcg/
 fi
@@ -65,6 +62,6 @@ else
     echo "Nagios stream disabled ..."
     /usr/bin/disable_nstream
 fi
-echo "Starting Apache ..."
-/usr/sbin/httpd -DFOREGROUND
-
+echo "Starting crond ..."
+sed -i -n '/pam_loginuid/!p' /etc/pam.d/crond
+/usr/sbin/crond -m off -p -n
