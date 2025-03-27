@@ -31,7 +31,7 @@ echo "Plugins:"
 echo "${plugins}"
 echo ""
 echo "Starting xinetd ..."
-export XINETD_LANG="en_US" && /opt/omd/versions/2.3.0p7.cre/bin/xinetd -stayalive -pidfile /var/run/xinetd.pid
+export XINETD_LANG="en_US" && /opt/omd/versions/default/bin/xinetd -stayalive -pidfile /var/run/xinetd.pid
 if [[ -n $CHECK_MK_USER_ID ]] ; then
    echo "Changing $CHECK_MK_SITE uid to $CHECK_MK_USER_ID"
    /usr/sbin/usermod -u $CHECK_MK_USER_ID $CHECK_MK_SITE
