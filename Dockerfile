@@ -13,6 +13,9 @@ RUN yum -y install ${monitoring_plugins} future
 RUN ln -s /omd/sites/${CHECK_MK_SITE}/etc/check_mk/ncgx.cfg /etc/ncgx/ncgx.cfg
 RUN mkdir -p /etc/ncgx/conf.d/ && ln -s /omd/sites/${CHECK_MK_SITE}/etc/check_mk/alerts.cfg /etc/ncgx/conf.d/alerts.cfg
 
+# OIDC setup
+RUN yum -y install https://github.com/OpenIDC/mod_auth_openidc/releases/download/v2.4.16.10/mod_auth_openidc-2.4.16.10-1.el9.x86_64.rpm 
+
 # perfsonar tools
 RUN curl -s https://raw.githubusercontent.com/perfsonar/project/master/install-perfsonar | sh -s - tools
 
