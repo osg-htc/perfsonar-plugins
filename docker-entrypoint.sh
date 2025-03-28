@@ -33,6 +33,8 @@ echo ""
 echo "Starting xinetd ..."
 export XINETD_LANG="en_US" && /opt/omd/versions/default/bin/xinetd -stayalive -pidfile /var/run/xinetd.pid
 if [[ -n $CHECK_MK_USER_ID ]] ; then
+   if id "saslauth" >/dev/null 2>&1; then
+      echo /usr/sbin/usermod -u 1250 saslauth
    echo "Changing $CHECK_MK_SITE uid to $CHECK_MK_USER_ID"
    /usr/sbin/usermod -u $CHECK_MK_USER_ID $CHECK_MK_SITE
    chown -R $CHECK_MK_SITE /etc/ncgx /var/cache/ncgx /var/cache/nap
