@@ -217,7 +217,10 @@ def run(mesh, gocdb, oim, hostcert, hostkey, wato_hosts):
     c.add_all(PS_BTOOLKIT_METRICS, tags=["bandwidth"])
     hosts = h.get_all_hosts()
     for host in hosts:
-        host_addr = socket.getaddrinfo(host, 80, 0, 0, socket.IPPROTO_TCP)
+        try:
+            host_addr = socket.getaddrinfo(host, 80, 0, 0, socket.IPPROTO_TCP)
+        except socket.gaierror as e:
+            continue
         ip6 = filter(lambda x: x[0] == socket.AF_INET6, host_addr)
         if ip6:
             c.add('perfSONAR services: web/https IPv6', hosts=(host,))
