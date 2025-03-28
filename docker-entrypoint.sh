@@ -8,7 +8,7 @@ _term() {
   fi
   rm -rf /opt/omd/sites/etf/etc/nagios/conf.d/wlcg/
   omd stop
-  /usr/sbin/httpd -k stop
+  #/usr/sbin/httpd -k stop
 }
 
 trap _term SIGINT SIGTERM
