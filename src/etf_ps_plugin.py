@@ -22,38 +22,38 @@ PS_BCORE_METRICS = (
 
 PS_TOOLKIT_METRICS = (
     'perfSONAR json summary',
-    'perfSONAR services: ntp',
-    'perfSONAR services: versions',
+    #'perfSONAR services: ntp',
+    #'perfSONAR services: versions',
     'perfSONAR services: http/https',
     'perfSONAR services: ndt/npad disabled',
     'perfSONAR services: regular testing/pscheduler',
     'perfSONAR services: pscheduler',
     'perfSONAR services: pscheduler diags',
     'perfSONAR configuration: meshes',
-    'perfSONAR configuration: contacts',
-    'perfSONAR configuration: location',
+    #'perfSONAR configuration: contacts',
+    #'perfSONAR configuration: location',
     'perfSONAR hardware check'
 )
 
 PS_LTOOLKIT_METRICS = (
-    'perfSONAR esmond freshness: owamp',
+    #'perfSONAR esmond freshness: owamp',
 )
 
 PS_BTOOLKIT_METRICS = (
-    'perfSONAR esmond freshness: bwctl',
-    'perfSONAR esmond freshness: trace',
+    #'perfSONAR esmond freshness: bwctl',
+    #'perfSONAR esmond freshness: trace',
 )
 
 PS_TP_METRICS = (
-    'perfSONAR services: owamp',
-    'perfSONAR services: bwctl',
+    #'perfSONAR services: owamp',
+    #'perfSONAR services: bwctl',
     'perfSONAR services: pscheduler',
 )
 
 PS_TP_CMA_METRICS = (
-    'perfSONAR esmond freshness: bwctl',
-    'perfSONAR esmond freshness: trace',
-    'perfSONAR esmond freshness: owamp',
+    #'perfSONAR esmond freshness: bwctl',
+    #'perfSONAR esmond freshness: trace',
+    #'perfSONAR esmond freshness: owamp',
     'perfSONAR services: owamp',
     'perfSONAR services: bwctl',
     'perfSONAR services: pscheduler',
@@ -213,8 +213,8 @@ def run(mesh, gocdb, oim, hostcert, hostkey, wato_hosts):
     c.add_all(PS_LCORE_METRICS, tags=["latency"])
     c.add_all(PS_BCORE_METRICS, tags=["bandwidth"])
     c.add_all(PS_TOOLKIT_METRICS, tags=["latency", "bandwidth"])
-    c.add_all(PS_LTOOLKIT_METRICS, tags=["latency"])
-    c.add_all(PS_BTOOLKIT_METRICS, tags=["bandwidth"])
+    #c.add_all(PS_LTOOLKIT_METRICS, tags=["latency"])
+    #c.add_all(PS_BTOOLKIT_METRICS, tags=["bandwidth"])
     hosts = h.get_all_hosts()
     for host in hosts:
         try:
