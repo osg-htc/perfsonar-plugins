@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper to run pscheduler troubleshoot with clean environment
+# Unsets LD_LIBRARY_PATH to avoid OMD site library conflicts
+unset LD_LIBRARY_PATH
+unset PYTHONPATH
+exec /usr/bin/pscheduler troubleshoot "$@"
