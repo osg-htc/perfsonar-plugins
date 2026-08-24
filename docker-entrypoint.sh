@@ -58,6 +58,7 @@ su etf -c "ncgx"
 su - etf -c "cmk -O"
 if [ "${NSTREAM_ENABLED}" -eq "1" ] ; then
     echo "Nagios stream enabled ..."
+    touch /var/log/nstream.log && chown $CHECK_MK_SITE /var/log/nstream.log
 else
     echo "Nagios stream disabled ..."
     /usr/bin/disable_nstream
