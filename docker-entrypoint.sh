@@ -53,8 +53,7 @@ fi
 cp /etc/ncgx/templates/generic/handlers.cfg /opt/omd/sites/etf/etc/nagios/conf.d/
 omd start
 rm -f /opt/omd/sites/etf/etc/nagios/conf.d/handlers.cfg 
-# fix ncgx on cmk's py3.12 env
-sed -i 's|command_line /usr/bin/ocsp_handler|command_line unset LD_LIBRARY_PATH \&\& /usr/bin/ocsp_handler|' /etc/ncgx/templates/generic/handlers.cfg
+
 su etf -c "ncgx"
 #su - etf -c "cmk -II; cmk -O"
 su - etf -c "cmk -O"
