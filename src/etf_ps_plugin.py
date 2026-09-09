@@ -25,8 +25,8 @@ PS_TOOLKIT_METRICS = (
     #'perfSONAR services: ntp',
     #'perfSONAR services: versions',
     'perfSONAR services: http/https',
-    'perfSONAR services: ndt/npad disabled',
-    'perfSONAR services: regular testing/pscheduler',
+    #'perfSONAR services: ndt/npad disabled',
+    #'perfSONAR services: regular testing/pscheduler',
     'perfSONAR services: pscheduler',
     'perfSONAR services: pscheduler diags',
     'perfSONAR configuration: meshes',
@@ -55,7 +55,7 @@ PS_TP_CMA_METRICS = (
     #'perfSONAR esmond freshness: trace',
     #'perfSONAR esmond freshness: owamp',
     'perfSONAR services: owamp',
-    'perfSONAR services: bwctl',
+    #'perfSONAR services: bwctl',
     'perfSONAR services: pscheduler',
 )
 
@@ -211,10 +211,7 @@ def run(mesh, gocdb, oim, hostcert, hostkey, wato_hosts):
 
     c = Checks()
     c.add_all(PS_LCORE_METRICS, tags=["latency"])
-    c.add_all(PS_BCORE_METRICS, tags=["bandwidth"])
     c.add_all(PS_TOOLKIT_METRICS, tags=["latency", "bandwidth"])
-    #c.add_all(PS_LTOOLKIT_METRICS, tags=["latency"])
-    #c.add_all(PS_BTOOLKIT_METRICS, tags=["bandwidth"])
     hosts = h.get_all_hosts()
     for host in hosts:
         try:
