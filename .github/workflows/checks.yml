@@ -12,6 +12,7 @@ permissions:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # the image's system Python (3.9 on EL9) runs ncgx, the discovery plugin and the checks
     container: almalinux:9
     steps:
