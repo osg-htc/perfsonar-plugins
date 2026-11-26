@@ -1,0 +1,36 @@
+name: Checks
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    # the image's system Python (3.9 on EL9) runs ncgx, the discovery plugin and the checks
+    container: almalinux:9
+    steps:
+      - name: Install tools
+        run: dnf -y -q install git python3-pip python3-requests && pip3 -q install pytest
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Python sources and ncgx configuration parse
+        # check_ps_es is still Python 2; only the esmond freshness checks use it, and they are disabled
+        run: |
+          for f in src/check_es src/check_ps src/check_ps_psched src/check_ps_report src/check_rsv \
+                   src/etf_ps_plugin.py config/sitecustomize.py src/*.cfg; do
+            python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" || exit 1
+          done
+
+      - name: Shell scripts parse
+        run: bash -n docker-entrypoint.sh src/pscheduler_check
+
+      - name: Tests
+        run: python3 -m pytest -q tests/

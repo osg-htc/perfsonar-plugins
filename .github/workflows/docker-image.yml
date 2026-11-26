@@ -8,6 +8,9 @@ name: Docker
 on:
   push:
     tags: [ '*.*.*' ]
+  # PRs: build the image to prove it still builds; nothing is pushed or signed (see the if: guards below)
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       name:
