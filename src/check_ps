@@ -49,6 +49,11 @@ app.add_argument('--target-memory', help="Target amount of memory on the toolkit
 app.add_argument('--dirq', help="Directory queue for summaries", default="/var/spool/nstream/outgoing")
 app.add_argument('--topic', help="Topic for summaries")
 app.add_argument('--cache-dir', dest='cache_dir', help="Cache directory to store intermediate results")
+app.add_argument('--config-hosts', dest='config_hosts',
+                 default="psconfig.opensciencegrid.org,psconfig-itb.opensciencegrid.org,psconfig.aglt2.org,"
+                         "psconfig-itb.aglt2.org,psconfig.osg-htc.org,meshconfig.opensciencegrid.org,"
+                         "meshconfig.grid.iu.edu",
+                 help="Comma-separated names of the pSConfig services a host may subscribe to (<name>/pub/auto/<host>)")
 
 
 @app.metric(metric_name="perfSONAR json summary", seq=1)
@@ -284,17 +289,12 @@ def test_meshes(args, io):
         io.summary = "Failed to get FQDN for %s" % args.hostname
         return
 
-    psconfig_ip = socket.gethostbyname('psconfig.opensciencegrid.org')
-
-    valid_meshes = ['meshconfig.grid.iu.edu/pub/auto/' + host, 'meshconfig.grid.iu.edu/pub/auto/' + args.hostname,
-                     'psconfig.opensciencegrid.org/pub/auto/' + host,
-                     'psconfig-itb.opensciencegrid.org/pub/auto/' + host,
-                     'psconfig.opensciencegrid.org/pub/auto/' + args.hostname,
-                     'psconfig-itb.opensciencegrid.org/pub/auto/' + args.hostname,
-                     'meshconfig.opensciencegrid.org/pub/auto/' + host,
-                     'meshconfig.opensciencegrid.org/pub/auto/' + args.hostname,
-                     psconfig_ip + '/pub/auto/' + host,
-                     psconfig_ip + '/pub/auto/' + args.hostname]
+    config_hosts = [n.strip() for n in args.config_hosts.split(',') if n.strip()]
+    try:  # some hosts subscribed by IP address
+        config_hosts.append(socket.gethostbyname(config_hosts[0]))
+    except (socket.error, IndexError):
+        pass
+    valid_meshes = [name + '/pub/auto/' + h for name in config_hosts for h in (host, args.hostname)]
 
     for mesh in valid_meshes:
         if any(mesh in c_mesh for c_mesh in configured_meshes):
@@ -321,7 +321,8 @@ def test_meshes(args, io):
     io.status = nap.CRITICAL
     io.summary = "Auto-mesh URL is missing/incorrect"
     print("The following URL was expected to be found in the mesh config:")
-    print('http://psconfig.opensciencegrid.org/pub/auto/' + host)
+    print('https://psconfig.opensciencegrid.org/pub/auto/' + host)
+    print("(or the same path on: %s)" % ", ".join(args.config_hosts.split(',')[1:]))
     print("The following was found:")
     print(configured_meshes)
     print_docs()

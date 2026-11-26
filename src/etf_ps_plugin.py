@@ -1,4 +1,5 @@
 import logging
+import os
 import requests
 import json
 import xml.etree.ElementTree as ET
@@ -69,36 +70,93 @@ def request(url, hostcert=None, hostkey=None, verify=False):
     return req.content
 
 
-def get_members(mesh_config):
-    members = set()
-    mesh_c = json.loads(mesh_config)
-    for entry in mesh_c['tests']:
-        if 'members' in entry['members'].keys():
-            for h in entry['members']['members']:
-                members.add(h)
-        if 'a_members' in entry['members'].keys():
-            for h in entry['members']['a_members']:
-                members.add(h)
-        if 'b_members' in entry['members'].keys():
-            for h in entry['members']['b_members']:
-                members.add(h)
+# pScheduler test types that run over owamp/twamp: hosts in such tasks must answer on port 861
+LATENCY_TESTS = ("latencybg", "latency")
+# last good member list of every mesh, used when a mesh cannot be fetched
+MESH_CACHE = "/var/cache/ncgx/etf_ps_meshes.json"
+
+
+def get_members(template):
+    """{hostname: set of tags} for the hosts in one pSConfig template.
+
+    A host is tagged 'latency' when a task it takes part in runs a latency test
+    (owamp/twamp), and 'bandwidth' for any other task; hosts listed without a
+    task get no tag here (the caller treats them as 'bandwidth').
+    """
+    tpl = json.loads(template)
+    addresses = tpl.get("addresses") or {}
+    groups = tpl.get("groups") or {}
+    tests = tpl.get("tests") or {}
+
+    def host_of(selector):
+        name = selector.get("name") if isinstance(selector, dict) else selector
+        entry = addresses.get(name) or {}
+        return entry.get("host") or entry.get("address") or name
+
+    members = {}
+    for task in (tpl.get("tasks") or {}).values():
+        if task.get("disabled"):
+            continue
+        group = groups.get(task.get("group")) or {}
+        test_type = (tests.get(task.get("test")) or {}).get("type")
+        tag = "latency" if test_type in LATENCY_TESTS else "bandwidth"
+        for key in ("addresses", "a-addresses", "b-addresses"):
+            for selector in group.get(key) or []:
+                host = host_of(selector)
+                if host:
+                    members.setdefault(host.strip().lower(), set()).add(tag)
+    for name in tpl.get("hosts") or {}:
+        members.setdefault(name.strip().lower(), set())
     return members
 
 
-def get_active_sonars(response):
-    mesh_urls = json.loads(response)
-    mk_groups = {}
-    members = set()
-    for entry in mesh_urls:
-        url = entry['include'][0]
-        if not url.startswith("https://"):
+def _load_cache(path):
+    try:
+        with open(path) as f:
+            return {mesh: {h: set(t) for h, t in hosts.items()} for mesh, hosts in json.load(f).items()}
+    except (IOError, OSError, ValueError):
+        return {}
+
+
+def _save_cache(path, meshes):
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({mesh: {h: sorted(t) for h, t in hosts.items()} for mesh, hosts in meshes.items()}, f)
+        os.rename(tmp, path)
+    except (IOError, OSError) as e:
+        log.warning("Unable to save mesh cache {}: {}".format(path, e))
+
+
+def get_active_sonars(response, cache_file=None):
+    """Read the pSConfig index (a list of {"include": [mesh URL]}) and every mesh in it.
+
+    Returns ({MESH: set of hosts}, {host: set of tags}). A mesh that cannot be
+    fetched or parsed is taken from the last good copy in cache_file, so one bad
+    mesh neither stops discovery nor drops its hosts.
+    """
+    cache_file = cache_file or MESH_CACHE
+    cache = _load_cache(cache_file)
+    meshes = {}
+    for entry in json.loads(response):
+        url = entry["include"][0]
+        if not url.startswith(("https://", "http://")):
             url = "https://" + url
-        mesh = url.rsplit('/', 1)[-1].upper()
-        response = request(url + '/?format=meshconfig')
-        hosts = get_members(response)
-        mk_groups[mesh] = hosts
-        for h in hosts:
-            members.add(h)
+        mesh = url.rstrip("/").rsplit("/", 1)[-1].upper()
+        try:
+            meshes[mesh] = get_members(request(url))
+        except Exception as e:
+            if mesh in cache:
+                log.warning("Mesh {} failed ({}), using the last good member list".format(url, e))
+                meshes[mesh] = cache[mesh]
+            else:
+                log.warning("Mesh {} failed ({}) and has no cached member list, skipping it".format(url, e))
+    _save_cache(cache_file, meshes)
+    mk_groups, members = {}, {}
+    for mesh, hosts in meshes.items():
+        mk_groups[mesh] = set(hosts)
+        for host, tags in hosts.items():
+            members.setdefault(host, set()).update(tags)
     return mk_groups, members
 
 
@@ -154,30 +212,35 @@ def run(mesh, gocdb, oim, hostcert, hostkey, wato_hosts):
     stype_map = {'net.perfSONAR.Latency': 'latency',
                  'net.perfSONAR.Bandwidth': 'bandwidth'}
 
-    log.info("Retrieving GOCDB sonars ...")
-    sonars = list(get_gocdb_sonars(request(gocdb+"&service_type=net.perfSONAR.Latency")))
-    sonars_b = list(get_gocdb_sonars(request(gocdb+"&service_type=net.perfSONAR.Bandwidth")))
-    sonars.extend(sonars_b)
+    sonars = []
+    # registries are best effort: if one is down, the others still define the hosts
+    for label, url, parse in (("GOCDB latency", gocdb + "&service_type=net.perfSONAR.Latency", get_gocdb_sonars),
+                              ("GOCDB bandwidth", gocdb + "&service_type=net.perfSONAR.Bandwidth", get_gocdb_sonars),
+                              ("OIM/Topology", oim, get_oim_sonars)):
+        log.info("Retrieving {} sonars ...".format(label))
+        try:
+            sonars.extend(parse(request(url)) or [])
+        except Exception as e:
+            log.error("Unable to read {} ({}), continuing without it".format(label, e))
 
-    log.info("Retrieving OIM sonars ...")
-    oim_sonars = list(get_oim_sonars(request(oim)))
-    sonars.extend(oim_sonars)
-
+    # the mesh index is required: if it fails, ncgx stops and the last generated configuration stays
     log.info("Retrieving meshes ...")
     (mesh_groups, members) = get_active_sonars(request(mesh))
-    sonars_set = set()
-    for s in sonars:
-        sonars_set.add(s[0])
+    sonars_set = set(s[0] for s in sonars)
 
-    non_registered = members - sonars_set
-    not_in_mesh = set(sonars_set) - members
+    non_registered = set(members) - sonars_set
+    not_in_mesh = sonars_set - set(members)
     log.warning("Hosts listed in meshes, but not registered in GOCDB/OIM: {}".format(non_registered))
     log.warning("Hosts registered, but not in any mesh: {}".format(not_in_mesh))
     for s in non_registered:
         if 'es.net' in s or 'geant' in s:
             continue
-        sonars.append((s, 'net.perfSONAR.Latency'))
-        sonars.append((s, 'net.perfSONAR.Bandwidth'))
+        # typed by what their meshes test: latency tests need owamp/twamp checks, everything else the toolkit ones
+        tags = members[s]
+        if 'latency' in tags:
+            sonars.append((s, 'net.perfSONAR.Latency'))
+        if 'bandwidth' in tags or not tags:
+            sonars.append((s, 'net.perfSONAR.Bandwidth'))
 
     h = Hosts()
     for host, stype in sonars:
@@ -218,8 +281,7 @@ def run(mesh, gocdb, oim, hostcert, hostkey, wato_hosts):
             host_addr = socket.getaddrinfo(host, 80, 0, 0, socket.IPPROTO_TCP)
         except socket.gaierror as e:
             continue
-        ip6 = filter(lambda x: x[0] == socket.AF_INET6, host_addr)
-        if ip6:
+        if any(x[0] == socket.AF_INET6 for x in host_addr):
             c.add('perfSONAR services: web/https IPv6', hosts=(host,))
 
     c.serialize()
