@@ -46,9 +46,10 @@ def _discover_both(section_perfsonar_summary, section_perfsonar_exporter) -> Dis
     yield Service()
 
 
-def _discover_exporter(section_perfsonar_exporter) -> DiscoveryResult:
-    # only where the perfSONAR host exporter answers (perfSONAR 5.1+, not blocked)
-    if checks.exporter_view(section_perfsonar_exporter) is not None:
+def _discover_exporter(section) -> DiscoveryResult:
+    # only where the perfSONAR host exporter answers (perfSONAR 5.1+, not blocked).
+    # A plugin with one section gets it as "section"; with several, as "section_<name>".
+    if checks.exporter_view(section) is not None:
         yield Service()
 
 
@@ -64,12 +65,12 @@ def _check_meshes(section_perfsonar_summary, section_perfsonar_exporter) -> Chec
     yield from _results(checks.check_meshes(section_perfsonar_summary, exporter=section_perfsonar_exporter))
 
 
-def _check_psconfig_agent(section_perfsonar_exporter) -> CheckResult:
-    yield from _results(checks.check_psconfig_agent(section_perfsonar_exporter, time.time()))
+def _check_psconfig_agent(section) -> CheckResult:
+    yield from _results(checks.check_psconfig_agent(section, time.time()))
 
 
-def _check_lookup(section_perfsonar_exporter) -> CheckResult:
-    yield from _results(checks.check_lookup_registration(section_perfsonar_exporter))
+def _check_lookup(section) -> CheckResult:
+    yield from _results(checks.check_lookup_registration(section))
 
 
 def _check_hardware(section) -> CheckResult:
