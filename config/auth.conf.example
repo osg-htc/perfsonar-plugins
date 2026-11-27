@@ -1,0 +1,87 @@
+# CILogon (OpenID Connect) login for the CheckMK site "etf" on psetf.
+#
+# The real file holds the CILogon client secret and lives only on the host:
+#   /opt/cmk/apache/auth.conf  ->  /opt/omd/sites/etf/etc/apache/conf.d/auth.conf  (single-file bind mount)
+# It must never be committed. Edit it IN PLACE: replacing the file (mv, or an editor that writes a
+# new file) leaves the container on the old inode until it is recreated.
+# Check and apply:  su - etf -c "/usr/sbin/httpd -t -f /omd/sites/etf/etc/apache/apache.conf"
+#                   su - etf -c "omd reload apache"
+#
+# Security notes (2026-11-27):
+# - CheckMK trusts X-Remote-User as the logged-in user (auth_by_http_header in multisite.mk).
+#   It must only ever be set here, after CILogon, never passed through from the client:
+#   it is unset first thing in <Location /etf>, and caddy also drops it (header_up -X-Remote-User).
+# - Do NOT skip CILogon for requests carrying CheckMK's auth_${SITE} cookie. That bypass let a forged
+#   cookie plus X-Remote-User log in as any user, and a stale cookie (each recreate makes a new
+#   site secret) sent users to login.py.
+# - CILogon users must also exist for CheckMK: see /usr/local/bin/cmk_user_profiles (entrypoint).
+
+Define SITE etf
+
+# ServerName from listen-ports.conf is overwritten with the public URL (caddy proxies to :5000).
+ServerName https://psetf.aglt2.org
+
+<IfModule !mod_auth_openidc.c>
+        LoadModule auth_openidc_module /usr/lib64/httpd/modules/mod_auth_openidc.so
+</IfModule>
+
+OIDCProviderMetadataURL https://cilogon.org/.well-known/openid-configuration
+OIDCClientID <CILogon client ID>
+OIDCClientSecret <CILogon client secret>
+
+OIDCCookie "oidc_${SITE}"
+OIDCCookiePath "/${SITE}/"
+
+# Only this host name can complete a login. Other names (psetf.opensciencegrid.org, later
+# psetf.osg-htc.org) are redirected to it by caddy; otherwise mod_auth_openidc answers 500.
+OIDCRedirectURI https://psetf.aglt2.org/${SITE}/secure/redirect_uri
+
+OIDCCryptoPassphrase "<random passphrase, e.g. openssl rand -base64 32>"
+
+OIDCPathScope "org.cilogon.userinfo"
+OIDCRemoteUserClaim "eppn"
+OIDCXForwardedHeaders X-Forwarded-Host
+
+# Debugging: a logged-in user can see their own session at /etf/secure/redirect_uri?info=json
+OIDCInfoHook             session
+OIDCInfoHook             userinfo
+OIDCInfoHook             id_token
+OIDCInfoHook             remote_user
+
+<Location /etf>
+
+        # Never trust an X-Remote-User sent by the client.
+        RequestHeader unset X-Remote-User
+
+    # Every page goes through CILogon (its own session cookie keeps this cheap), except the
+    # endpoints CheckMK needs without a browser login, automation calls that carry CheckMK's
+    # own credentials in the query string, and static assets. None of these get X-Remote-User,
+    # so CheckMK authenticates them itself.
+    <If "! %{REQUEST_URI} = '/${SITE}/check_mk/register_agent.py' && \
+        ! %{REQUEST_URI} = '/${SITE}/check_mk/run_cron.py' && \
+        ! %{REQUEST_URI} = '/${SITE}/check_mk/deploy_agent.py' && \
+        ! %{REQUEST_URI} = '/${SITE}/check_mk/restapi.py' && \
+        ! %{REQUEST_URI} -strmatch '/${SITE}/check_mk/api/*' && \
+        ! %{QUERY_STRING} =~ /(_secret=|auth_|register_agent)/ && \
+        ! %{REQUEST_URI} =~ m#^/${SITE}/(omd/|check_mk/((images|themes)/.*\.(png|svg)|login\.py|.*\.(css|js)))# " >
+
+                Order allow,deny
+                Allow from all
+
+                AuthType openid-connect
+                require valid-user
+
+                RequestHeader set X-Remote-User "expr=%{REMOTE_USER}"
+
+            ErrorDocument 401 '<html> \
+              <head> \
+                <meta http-equiv="refresh" content="1; URL=/${SITE}/check_mk/login.py"> \
+              </head> \
+              <body> \
+                OIDC authentication failed, redirecting to login page. \
+                <a href="/${SITE}/check_mk/login.py">Click here</a>. \
+              </body> \
+            </html>'
+    </If>
+
+</Location>
