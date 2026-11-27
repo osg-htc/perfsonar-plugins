@@ -52,6 +52,15 @@ if [ "${current:-0}" -lt 300 ]; then
     sed -i 's/^service_check_timeout=.*/service_check_timeout=300/' etc/nagios/nagios.d/tuning.cfg
     echo "service_check_timeout ${current} -> 300"
 fi
+# a site without a saved schedule (new or recreated container) runs the first check of every service
+# within max_service_check_spread minutes: CheckMK's default of 5 starts all special agents at once,
+# which then stay in step every hour. 30, as on the ETF psetf.
+spread=$(sed -n 's/^max_service_check_spread=//p' etc/nagios/nagios.d/tuning.cfg)
+if [ "${spread:-0}" -lt 30 ]; then
+    sed -i 's/^max_service_check_spread=.*/max_service_check_spread=30/' etc/nagios/nagios.d/tuning.cfg
+    echo "max_service_check_spread ${spread} -> 30"
+fi
+
 # graphs of the daily pscheduler diags check: the default RRD heartbeat (8460 s) stores every
 # daily result as unknown. 36 h fills each day and still shows a missed run as a gap. The
 # pnp4nagios setting applies to new graph files; tune the existing ones.

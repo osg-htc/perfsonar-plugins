@@ -99,10 +99,15 @@ The same release also carries psetf for CheckMK 2.5. It has three parts.
   - the exporter cron file;
   - `etc/psetf/exporter.json`, mode `file` unless already configured;
   - Nagios `service_check_timeout` of 300 s, for the 240 s diags check;
+  - Nagios `max_service_check_spread` of 30 minutes (CheckMK's default is 5), so a site without a saved schedule does not start every special agent at once;
   - an RRD heartbeat of 36 h for the daily diags check's graphs (pnp4nagios `check_commands/check_mk_active-perfsonar_diags.cfg`; existing graph files are tuned), without which its graphs stay empty;
   - reloads of Apache and the core.
 
   It is idempotent: the same version is left alone, and an older enabled version is disabled.
+
+**The container needs** `cap_add: [NET_RAW]` (for `check_icmp`) and a process limit above podman's default of 2048, for example `pids_limit: 8192`. Each special agent run takes about 8 processes and threads. With 258 hosts running at once, staging ran out on 27 Nov 2026 (`can't start new thread`). An existing container can be changed without a recreate: `podman update --pids-limit 8192 CONTAINER`.
+
+**Don't force the special agent on all hosts at once** (for example to test a release): the runs stay in step every hour after that. Force them in small batches, or reschedule them across the hour.
 
 To install or upgrade on a site:
 
