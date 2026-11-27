@@ -84,6 +84,7 @@ These files come from the host, so a recreate keeps them:
 | Host | In the container | What |
 |---|---|---|
 | `/opt/cmk/check_mk/` | `/opt/omd/sites/etf/etc/check_mk` | CheckMK config, `ncgx.cfg` (mesh, registry URLs) and `alerts.cfg` |
-| `/opt/cmk/apache/auth.conf` | `.../etc/apache/conf.d/auth.conf` | CILogon/OIDC login. Holds the client secret, so it must never go into this repository |
+| `/opt/cmk/apache/auth.conf` | `.../etc/apache/conf.d/auth.conf` | CILogon/OIDC login. Holds the client secret, so it must never go into this repository. The structure it must keep, and why, is in `config/auth.conf.example`. Edit it in place: it is a single-file bind mount |
 | `/usr/local/perfdata/` | `.../var/pnp4nagios/perfdata` | performance graphs |
 | `/var/spool/nstream/outgoing` | same | results handed to n-stream |
+| `/opt/caddy/etc/Caddyfile` | caddy container | TLS for psetf.aglt2.org. It redirects the other host names to that name, and drops any client-sent `X-Remote-User` (`header_up -X-Remote-User`) |
