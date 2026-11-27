@@ -80,6 +80,13 @@ class CheckMK(object):
                          "properties": {"description": description, "disabled": False},
                          "conditions": conditions or {}})
 
+    def update_rule(self, rule_id, value_raw):
+        r = self._call("GET", "/objects/rule/%s" % rule_id)
+        ext = r.json().get("extensions") or {}
+        self._call("PUT", "/objects/rule/%s" % rule_id, headers={"If-Match": r.headers.get("ETag", "*")},
+                   json={"value_raw": value_raw, "properties": ext.get("properties") or {},
+                         "conditions": ext.get("conditions") or {}})
+
     # service discovery
     def discover_services(self, hosts, wait=1800):
         """Bulk service discovery (add new, remove vanished, refresh labels) and wait for it."""

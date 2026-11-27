@@ -29,14 +29,15 @@ class FakeResponse(object):
 
 
 class FakeSession(object):
-    """Answers by path; http:// fails when `http_down`, so the agent falls back to https."""
+    """Answers by path; http:// fails when `http_down`, https:// when `https_down`."""
 
-    def __init__(self, pages, http_down=False, down=False):
-        self.pages, self.http_down, self.down, self.calls = pages, http_down, down, []
+    def __init__(self, pages, http_down=False, down=False, https_down=False):
+        self.pages, self.http_down, self.down, self.https_down, self.calls = pages, http_down, down, https_down, []
 
     def get(self, url, timeout=None, headers=None, verify=None):
         self.calls.append((url, headers.get("Host"), verify))
-        if self.down or (self.http_down and url.startswith("http://")):
+        if self.down or (self.http_down and url.startswith("http://")) or \
+                (self.https_down and url.startswith("https://")):
             raise requests.exceptions.ConnectionError("refused")
         path = url.split("/", 3)[3]
         if "/" + path not in self.pages:
@@ -64,19 +65,43 @@ def sections(output):
 def run_agent(session, tmp_path, host="PS.example.org"):
     buf = io.StringIO()
     agent.target = lambda h: "192.0.2.10"
+    agent.dns_names = lambda h, a: ["alias.example.org"]
     agent.main([host, "--spool", str(tmp_path)], out=buf, session=session)
     return sections(buf.getvalue())
 
 
-def test_agent_falls_back_to_https_and_reports_both_sections(tmp_path):
+def test_agent_uses_https_and_reports_both_sections(tmp_path):
     session = FakeSession(pages(), http_down=True)
     s = run_agent(session, tmp_path)
     assert s["perfsonar_summary"]["ok"] and s["perfsonar_summary"]["url"].startswith("https://192.0.2.10/")
+    assert len(session.calls) == 9 and not any(u.startswith("http://") for u, _h, _v in session.calls)
     assert s["perfsonar_pscheduler"]["stats"] == {"pending": 0, "running": 1, "overdue": 2, "missed": 3,
                                                   "failed": 4, "nonstart": 5, "finished": 6, "archiver_backlog": 42}
     assert all(h == "ps.example.org" and v is False for _u, h, v in session.calls)   # Host header, no verify
     spooled = json.load(open(str(tmp_path / "ps.example.org.json")))
     assert spooled["host"] == "ps.example.org" and spooled["data"]["cpus"] == 2
+    assert s["perfsonar_summary"]["names"] == ["alias.example.org"]
+
+
+def test_an_http_only_host_is_asked_over_http_after_one_https_try(tmp_path):
+    session = FakeSession(pages(), https_down=True)
+    s = run_agent(session, tmp_path)
+    assert s["perfsonar_summary"]["scheme"] == "http" and s["perfsonar_pscheduler"]["ok"]
+    https = [u for u, _h, _v in session.calls if u.startswith("https://")]
+    assert len(https) == 1                  # only the summary tries https; pScheduler starts with the scheme that worked
+
+
+def test_https_uses_classic_tls_groups():
+    ctx = agent.classic_tls_context()
+    assert ctx.verify_mode == agent.ssl.CERT_NONE and not ctx.check_hostname
+    adapter = agent.make_session().get_adapter("https://192.0.2.10/")
+    assert isinstance(adapter, agent.ClassicTLSAdapter)
+
+
+def test_the_deadline_stops_the_run():
+    budget = agent.Budget(0)
+    s = agent.summary_section("ps.example.org", "192.0.2.10", 60, FakeSession(pages()), budget)
+    assert not s["ok"] and "deadline" in s["error"]
 
 
 def test_agent_reports_an_unreachable_host_without_spooling(tmp_path):
@@ -107,6 +132,27 @@ def test_summary_and_http_checks():
     assert checks.check_summary(None)[0][0] == checks.UNKNOWN
     assert checks.check_http(section_ok())[0][0] == checks.OK
     assert checks.check_http({"ok": False})[0][0] == checks.CRIT
+
+
+def test_meshes_accepts_a_dns_name_of_the_host():
+    other_name = dict(SUMMARY, templates=["https://psconfig.opensciencegrid.org/pub/auto/perfsonar.phy.bris.ac.uk"],
+                      external_address=dict(SUMMARY["external_address"], dns_name="lcgplat.phy.bris.ac.uk"))
+    section = section_ok(other_name, host="lcgplat.phy.bris.ac.uk")
+    assert checks.check_meshes(section)[0][0] == checks.CRIT
+    section["names"] = ["perfsonar.phy.bris.ac.uk"]
+    assert checks.check_meshes(section)[0][:2] == (checks.OK, "Auto-URL configured correctly")
+
+
+def test_a_slow_toolkit_is_not_unreachable():
+    class Slow(FakeSession):
+        def get(self, url, timeout=None, headers=None, verify=None):
+            if "toolkit" in url:
+                raise requests.exceptions.ReadTimeout("Read timed out")
+            return FakeSession.get(self, url, timeout, headers, verify)
+    s = agent.summary_section("ps.example.org", "192.0.2.10", 60, Slow(pages()))
+    assert not s["ok"] and not s["unreachable"]
+    d = agent.summary_section("ps.example.org", "192.0.2.10", 60, FakeSession(pages(), down=True))
+    assert d["unreachable"]
 
 
 def test_meshes_accepts_the_new_pwa_names_and_flags_missing_urls():

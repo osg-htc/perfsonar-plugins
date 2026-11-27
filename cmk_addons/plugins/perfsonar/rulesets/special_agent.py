@@ -14,9 +14,9 @@ rule_spec_perfsonar = SpecialAgent(
         elements={
             "timeout": DictElement(
                 parameter_form=TimeSpan(
-                    title=Title("Timeout per HTTP request"),
+                    title=Title("Read timeout per HTTP request"),
                     displayed_magnitudes=(TimeMagnitude.SECOND,),
-                    prefill=DefaultValue(30.0),
+                    prefill=DefaultValue(60.0),
                     custom_validate=[NumberInRange(min_value=1.0, max_value=300.0)],
                 ),
             ),

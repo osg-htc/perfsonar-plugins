@@ -65,7 +65,9 @@ def check_meshes(section, config_hosts=CONFIG_HOSTS):
     if not configured:
         return [(CRIT, "No meshes configured", DOCS, [])]
     host = section.get("host", "")
-    names = {host, ((data.get("external_address") or {}).get("dns_name") or "").strip().lower()} - {""}
+    names = {host, ((data.get("external_address") or {}).get("dns_name") or "").strip().lower()}
+    names |= set(section.get("names") or [])     # DNS names of the host (canonical, reverse), from the agent
+    names -= {""}
     listing = "Configured: " + ", ".join(configured)
     for url in configured:
         parts = urlsplit(url if "://" in url else "https://" + url)

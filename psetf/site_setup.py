@@ -6,6 +6,7 @@ to run again after a change here (add a new rule with a new description).
 Run:  python3 -m psetf.site_setup --config /etc/psetf/discovery.json [--dry-run]
 """
 import argparse
+import ast
 import json
 import logging
 import sys
@@ -29,7 +30,7 @@ RULES = [
     ("active_checks:icmp", "psetf: PING service (kept for firewall hints; the host check is TCP 443)",
      "{}", None),
     ("special_agents:perfsonar", "psetf: perfSONAR toolkit special agent for all discovered hosts",
-     "{'timeout': 30.0}", None),
+     "{'timeout': 60.0}", None),
     # the special agent runs with the "Check_MK" service: every 60 min, as check_ps did on the ETF psetf
     ("extra_service_conf:check_interval", "psetf: run the perfSONAR special agent every 60 minutes",
      "60.0", {"service_description": {"match_on": ["Check_MK$"], "operator": "one_of"}}),
@@ -44,6 +45,13 @@ RULES = [
 ]
 
 
+def _same_value(a, b):
+    try:
+        return ast.literal_eval(a) == ast.literal_eval(b)
+    except (ValueError, SyntaxError):
+        return a == b
+
+
 def run(config, dry_run=False, cmk=None):
     cmk = cmk or CheckMK(config["api_url"], config["api_user"], _secret(config), verify=config.get("verify_tls", True))
     created = []
@@ -51,7 +59,15 @@ def run(config, dry_run=False, cmk=None):
         existing = [r for r in cmk.rules(ruleset)
                     if ((r.get("extensions") or {}).get("properties") or {}).get("description") == description]
         if existing:
-            log.info("rule exists: %s", description)
+            current = ((existing[0].get("extensions") or {}).get("value_raw") or "").strip()
+            if _same_value(current, value_raw):
+                log.info("rule exists: %s", description)
+                continue
+            log.info("%s rule value: %s (%s -> %s)", "would update" if dry_run else "updating", description,
+                     current, value_raw)
+            if not dry_run:
+                cmk.update_rule(existing[0]["id"], value_raw)
+            created.append(description)
             continue
         log.info("%s rule: %s", "would create" if dry_run else "creating", description)
         if not dry_run:
