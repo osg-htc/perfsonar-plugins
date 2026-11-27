@@ -69,6 +69,40 @@ class CheckMK(object):
             self._call("POST", "/domain-types/host_config/actions/bulk-delete/invoke",
                        json={"entries": sorted(names)}, expect=(200, 204))
 
+    # rules
+    def rules(self, ruleset):
+        r = self._call("GET", "/domain-types/rule/collections/all", params={"ruleset_name": ruleset})
+        return r.json().get("value", [])
+
+    def create_rule(self, ruleset, folder, value_raw, description, conditions=None):
+        self._call("POST", "/domain-types/rule/collections/all",
+                   json={"ruleset": ruleset, "folder": folder, "value_raw": value_raw,
+                         "properties": {"description": description, "disabled": False},
+                         "conditions": conditions or {}})
+
+    # service discovery
+    def discover_services(self, hosts, wait=1800):
+        """Bulk service discovery (add new, remove vanished, refresh labels) and wait for it."""
+        if not hosts:
+            return None
+        # answers 303 See Other with the background job in Location
+        r = self._call("POST", "/domain-types/discovery_run/actions/bulk-discovery-start/invoke",
+                       expect=(200, 303), allow_redirects=False,
+                       json={"hostnames": sorted(hosts), "do_full_scan": True, "bulk_size": 3, "ignore_errors": True,
+                             "options": {"monitor_undecided_services": True, "remove_vanished_services": True,
+                                         "update_service_labels": True, "update_service_parameters": True,
+                                         "update_host_labels": True}})
+        job = r.headers.get("Location", "").split("/objects/background_job/")[-1] or r.json().get("id")
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            s = self._call("GET", "/objects/background_job/%s" % job).json()
+            # "active" is already false while a job waits for its lock: go by the job's state
+            state = ((s.get("extensions") or {}).get("status") or {}).get("state")
+            if state in ("finished", "stopped", "exception"):
+                return s
+            time.sleep(10)
+        raise CheckMKError("bulk service discovery still running after %ss" % wait)
+
     # changes
     def pending_changes(self):
         r = self._call("GET", "/domain-types/activation_run/collections/pending_changes")

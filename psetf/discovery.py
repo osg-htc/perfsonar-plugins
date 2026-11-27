@@ -40,7 +40,8 @@ log = logging.getLogger("psetf")
 FOLDER = "/perfsonar"
 LABEL_PREFIX = "psetf/"
 SKIP_UNREGISTERED = ("es.net", "geant")
-HOST_TAGS = {"tag_agent": "no-agent", "tag_snmp_ds": "no-snmp"}
+# special agents only (the perfsonar special agent), no CheckMK agent, no SNMP
+HOST_TAGS = {"tag_agent": "special-agents", "tag_snmp_ds": "no-snmp"}
 
 
 def address_family(labels):
@@ -125,6 +126,9 @@ def plan(desired, existing, missing_counts, delete_after=3, max_delete_fraction=
                 changes["labels"] = dict(others, **labels)        # keep labels set by hand
             if existing[h].get("tag_address_family", "ip-v4-only") != address_family(labels):
                 changes["tag_address_family"] = address_family(labels)
+            for tag, value in HOST_TAGS.items():
+                if existing[h].get(tag) != value:
+                    changes[tag] = value
             if changes:
                 update[h] = changes
     gone = sorted(h for h in existing if h not in desired)
@@ -156,7 +160,7 @@ def _save(path, data):
     os.rename(tmp, path)
 
 
-def run(config, dry_run=False, cmk=None, fetcher=fetch, resolver=resolve):
+def run(config, dry_run=False, cmk=None, fetcher=fetch, resolver=resolve, rediscover_all=False):
     state_dir = config.get("state_dir", "/var/lib/psetf")
     mesh_cache_file = os.path.join(state_dir, "meshes.json")
     missing_file = os.path.join(state_dir, "missing.json")
@@ -203,6 +207,10 @@ def run(config, dry_run=False, cmk=None, fetcher=fetch, resolver=resolve):
     os.makedirs(state_dir, exist_ok=True)
     _save(mesh_cache_file, mesh_groups)
     _save(missing_file, changes["missing"])
+    # services of new hosts, and of hosts whose tags changed (e.g. the agent type)
+    rediscover = set(changes["create"]) | {h for h, a in changes["update"].items() if set(a) - {"labels"}}
+    if rediscover_all:
+        rediscover |= set(desired)
     if changes["create"] or changes["update"] or changes["delete"]:
         # CheckMK 2.5's automation-helper reloads its workers a few seconds after the host
         # files change; an activation started inside that window lost its "restart" reply and
@@ -211,6 +219,12 @@ def run(config, dry_run=False, cmk=None, fetcher=fetch, resolver=resolve):
     # also activates changes left pending by an earlier run whose activation failed
     if cmk.activate(config["site"], wait=config.get("activation_timeout", 600)) is not None:
         log.info("changes activated on site %s", config["site"])
+    if rediscover and config.get("discover_services", True):
+        log.info("service discovery for %d hosts", len(rediscover))
+        cmk.discover_services(rediscover)
+        time.sleep(config.get("settle_seconds", 20))
+        if cmk.activate(config["site"], wait=config.get("activation_timeout", 600)) is not None:
+            log.info("discovered services activated on site %s", config["site"])
     return changes
 
 
@@ -226,13 +240,14 @@ def main(argv=None):
     ap.add_argument("--config", required=True, help="JSON: mesh_index, gocdb, osg_topology, api_url, api_user, "
                                                     "api_secret_file, site, state_dir, ...")
     ap.add_argument("--dry-run", action="store_true", help="compute and print the changes, change nothing")
+    ap.add_argument("--rediscover", action="store_true", help="run service discovery on every host, not only new/changed ones")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
     with open(args.config) as f:
         config = json.load(f)
-    changes = run(config, dry_run=args.dry_run)
+    changes = run(config, dry_run=args.dry_run, rediscover_all=args.rediscover)
     if args.dry_run:
         print(json.dumps({"create": sorted(changes["create"]), "update": sorted(changes["update"]),
                           "delete": changes["delete"], "missing": changes["missing"],

@@ -1,0 +1,77 @@
+"""One-time (idempotent) CheckMK configuration for psetf: the rules that attach the checks.
+
+Rules are found by their description; a rule that exists is left alone, so this is safe
+to run again after a change here (add a new rule with a new description).
+
+Run:  python3 -m psetf.site_setup --config /etc/psetf/discovery.json [--dry-run]
+"""
+import argparse
+import json
+import logging
+import sys
+
+from .checkmk import CheckMK
+from .discovery import FOLDER, _secret
+
+log = logging.getLogger("psetf")
+
+
+def label_condition(label):
+    return {"host_label_groups": [{"operator": "and", "label_group": [{"operator": "and", "label": label}]}]}
+
+
+RULES = [
+    # (ruleset, description, value_raw, conditions)
+    # Host state = can we open the toolkit's HTTPS port (ping is often filtered); ping stays as a
+    # service, so "443 up but ping lost" vs "both down" hints at a firewall rather than a dead host.
+    ("host_check_commands", "psetf: host is up when the toolkit's HTTPS port (443) accepts connections",
+     "('tcp', 443)", None),
+    ("active_checks:icmp", "psetf: PING service (kept for firewall hints; the host check is TCP 443)",
+     "{}", None),
+    ("special_agents:perfsonar", "psetf: perfSONAR toolkit special agent for all discovered hosts",
+     "{'timeout': 30.0}", None),
+    # the special agent runs with the "Check_MK" service: every 60 min, as check_ps did on the ETF psetf
+    ("extra_service_conf:check_interval", "psetf: run the perfSONAR special agent every 60 minutes",
+     "60.0", {"service_description": {"match_on": ["Check_MK$"], "operator": "one_of"}}),
+    ("custom_checks", "psetf: owamp port on latency hosts",
+     repr({"service_description": "perfSONAR services: owamp",
+           "command_line": "check_tcp -H $HOSTADDRESS$ -p 861"}),
+     label_condition("psetf/latency:yes")),
+    ("custom_checks", "psetf: toolkit web over IPv6 on hosts with an IPv6 address",
+     repr({"service_description": "perfSONAR services: web/https IPv6",
+           "command_line": "check_tcp -6 -H $_HOSTADDRESS_6$ -p 443"}),
+     label_condition("psetf/ipv6:yes")),
+]
+
+
+def run(config, dry_run=False, cmk=None):
+    cmk = cmk or CheckMK(config["api_url"], config["api_user"], _secret(config), verify=config.get("verify_tls", True))
+    created = []
+    for ruleset, description, value_raw, conditions in RULES:
+        existing = [r for r in cmk.rules(ruleset)
+                    if ((r.get("extensions") or {}).get("properties") or {}).get("description") == description]
+        if existing:
+            log.info("rule exists: %s", description)
+            continue
+        log.info("%s rule: %s", "would create" if dry_run else "creating", description)
+        if not dry_run:
+            cmk.create_rule(ruleset, FOLDER, value_raw, description, conditions)
+        created.append(description)
+    if created and not dry_run:
+        cmk.activate(config["site"], wait=config.get("activation_timeout", 600))
+    return created
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    with open(args.config) as f:
+        run(json.load(f), dry_run=args.dry_run)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

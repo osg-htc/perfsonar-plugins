@@ -75,13 +75,14 @@ def test_plan_creates_updates_and_keeps_labels_set_by_hand():
     desired = {"new.example.org": {"psetf/bandwidth": "yes", "psetf/ipv4": "yes"},
                "same.example.org": {"psetf/latency": "yes", "psetf/ipv4": "yes"},
                "changed.example.org": {"psetf/latency": "yes", "psetf/ipv4": "yes", "psetf/ipv6": "yes"}}
-    existing = {"same.example.org": {"labels": {"psetf/latency": "yes", "psetf/ipv4": "yes"},
-                                     "tag_address_family": "ip-v4-only"},
-                "changed.example.org": {"labels": {"psetf/latency": "yes", "psetf/ipv4": "yes", "owner": "shawn"},
-                                        "tag_address_family": "ip-v4-only"}}
+    tags = {"tag_agent": "special-agents", "tag_snmp_ds": "no-snmp"}
+    existing = {"same.example.org": dict(tags, labels={"psetf/latency": "yes", "psetf/ipv4": "yes"},
+                                         tag_address_family="ip-v4-only"),
+                "changed.example.org": dict(tags, labels={"psetf/latency": "yes", "psetf/ipv4": "yes", "owner": "shawn"},
+                                            tag_address_family="ip-v4-only")}
     p = discovery.plan(desired, existing, {})
     assert list(p["create"]) == ["new.example.org"]
-    assert p["create"]["new.example.org"]["tag_agent"] == "no-agent"
+    assert p["create"]["new.example.org"]["tag_agent"] == "special-agents"
     assert p["create"]["new.example.org"]["tag_address_family"] == "ip-v4-only"
     assert p["update"] == {"changed.example.org": {"labels": {"owner": "shawn", "psetf/latency": "yes",
                                                               "psetf/ipv4": "yes", "psetf/ipv6": "yes"},
@@ -101,6 +102,13 @@ def test_hosts_are_deleted_only_after_missing_several_runs():
     assert p["delete"] == ["h0.example.org"] and p["missing"] == {}
     # back again before the limit: its count is forgotten
     assert discovery.plan(dict(desired, **{"h0.example.org": {}}), existing, {"h0.example.org": 2})["missing"] == {}
+
+
+def test_a_changed_agent_tag_is_updated():
+    old = {"h.example.org": {"labels": {"psetf/ipv4": "yes"}, "tag_address_family": "ip-v4-only",
+                             "tag_agent": "no-agent", "tag_snmp_ds": "no-snmp"}}
+    assert discovery.plan({"h.example.org": {"psetf/ipv4": "yes"}}, old, {})["update"] == \
+        {"h.example.org": {"tag_agent": "special-agents"}}
 
 
 def test_mass_deletion_is_refused():
@@ -129,6 +137,9 @@ class FakeCheckMK(object):
     def delete_hosts(self, names):
         self.calls.append(("delete", sorted(names)))
 
+    def discover_services(self, hosts):
+        self.calls.append(("discover", sorted(hosts)))
+
     def activate(self, site, wait=600):
         self.calls.append(("activate", site))
         return {}
@@ -156,6 +167,7 @@ def test_run_end_to_end_with_a_failing_mesh_and_registry(tmp_path):
     assert sorted(changes["create"]) == ["a.example.org", "both.example.eu", "lat.example.eu"]
     assert changes["missing"] == {"old.example.org": 1}
     assert ("activate", "psetf") in cmk.calls
+    assert ("discover", ["a.example.org", "both.example.eu", "lat.example.eu"]) in cmk.calls
     saved = json.load(open(str(tmp_path / "meshes.json")))
     assert saved == {"GOOD": {"a.example.org": ["latency"]}}  # the broken mesh had no cache: skipped
 
