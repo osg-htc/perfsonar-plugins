@@ -35,6 +35,13 @@ RULES = [
     # the special agent runs with the "Check_MK" service: every 60 min, as check_ps did on the ETF psetf
     ("extra_service_conf:check_interval", "psetf: run the perfSONAR special agent every 60 minutes",
      "60.0", {"service_description": {"match_on": ["Check_MK$"], "operator": "one_of"}}),
+    # pscheduler troubleshoot over the REST API, daily as on the ETF psetf. The check stops itself at
+    # 240 s; the site's Nagios service_check_timeout must be above that (etc/nagios/nagios.d/tuning.cfg,
+    # 300 on staging; not settable through the REST API).
+    ("active_checks:perfsonar_diags", "psetf: pScheduler diagnostics (troubleshoot with idle test) on all hosts",
+     "{'limit': 240.0}", None),
+    ("extra_service_conf:check_interval", "psetf: pScheduler diagnostics once a day",
+     "1440.0", {"service_description": {"match_on": ["perfSONAR services: pscheduler diags$"], "operator": "one_of"}}),
     ("custom_checks", "psetf: owamp port on latency hosts",
      repr({"service_description": "perfSONAR services: owamp",
            "command_line": "check_tcp -H $HOSTADDRESS$ -p 861"}),
