@@ -99,6 +99,7 @@ The same release also carries psetf for CheckMK 2.5. It has three parts.
   - the exporter cron file;
   - `etc/psetf/exporter.json`, mode `file` unless already configured;
   - Nagios `service_check_timeout` of 300 s, for the 240 s diags check;
+  - an RRD heartbeat of 36 h for the daily diags check's graphs (pnp4nagios `check_commands/check_mk_active-perfsonar_diags.cfg`; existing graph files are tuned), without which its graphs stay empty;
   - reloads of Apache and the core.
 
   It is idempotent: the same version is left alone, and an older enabled version is disabled.

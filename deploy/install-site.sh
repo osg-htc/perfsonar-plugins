@@ -52,6 +52,25 @@ if [ "${current:-0}" -lt 300 ]; then
     sed -i 's/^service_check_timeout=.*/service_check_timeout=300/' etc/nagios/nagios.d/tuning.cfg
     echo "service_check_timeout ${current} -> 300"
 fi
+# graphs of the daily pscheduler diags check: the default RRD heartbeat (8460 s) stores every
+# daily result as unknown. 36 h fills each day and still shows a missed run as a gap. The
+# pnp4nagios setting applies to new graph files; tune the existing ones.
+HEARTBEAT=129600
+cat > etc/pnp4nagios/check_commands/check_mk_active-perfsonar_diags.cfg <<CFG
+# psetf (deploy/install-site.sh): the pscheduler diags check runs once a day
+RRD_HEARTBEAT = $HEARTBEAT
+CFG
+shopt -s nullglob
+tuned=0
+for f in var/pnp4nagios/perfdata/*/perfSONAR_services__pscheduler_diags_*.rrd; do
+    if ! rrdtool info "$f" | grep -qx "ds\[1\].minimal_heartbeat = $HEARTBEAT"; then
+        rrdtool tune "$f" --heartbeat "1:$HEARTBEAT" >/dev/null
+        tuned=$((tuned + 1))
+    fi
+done
+shopt -u nullglob
+[ "$tuned" -eq 0 ] || echo "diags graphs: heartbeat set to $HEARTBEAT s in $tuned files"
+
 omd reload apache >/dev/null      # the web interface loads the plugin's rulesets
 cmk -R >/dev/null && echo "core configuration regenerated"
 SITE_SH
