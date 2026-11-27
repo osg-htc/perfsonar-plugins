@@ -1,0 +1,38 @@
+name: MKP
+
+# The CheckMK extension package psetf_perfsonar (phase 2: psetf on CheckMK 2.5), built with the
+# pinned CheckMK image. PRs: built and kept as a workflow artifact. Release tags X.Y.Z: built and
+# attached to the GitHub release of that tag.
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    tags: [ '*.*.*' ]
+
+permissions:
+  contents: write
+
+jobs:
+  mkp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build the MKP
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then version="${{ github.ref_name }}"; else version="0.0.0"; fi
+          packaging/build-mkp.sh "$version"
+
+      - name: Keep it with the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: psetf_perfsonar-mkp
+          path: dist/*.mkp
+
+      - name: Attach it to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.ref_name }}" dist/*.mkp --clobber --repo "${{ github.repository }}"
