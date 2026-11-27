@@ -10,6 +10,7 @@ import ast
 import json
 import logging
 import sys
+import time
 
 from .checkmk import CheckMK
 from .discovery import FOLDER, _secret
@@ -38,6 +39,13 @@ RULES = [
      repr({"service_description": "perfSONAR services: owamp",
            "command_line": "check_tcp -H $HOSTADDRESS$ -p 861"}),
      label_condition("psetf/latency:yes")),
+    # owamp per address family: some sites filter 861 on IPv4 but not IPv6 (t2-pfsn2.jinr.ru,
+    # sampaps01.if.usp.br, Nov 2026); the ETF check connected by name and so only ever saw IPv6
+    ("custom_checks", "psetf: owamp port over IPv6 on latency hosts with an IPv6 address",
+     repr({"service_description": "perfSONAR services: owamp IPv6",
+           "command_line": "check_tcp -6 -H $_HOSTADDRESS_6$ -p 861"}),
+     {"host_label_groups": [{"operator": "and", "label_group": [{"operator": "and", "label": "psetf/latency:yes"},
+                                                                 {"operator": "and", "label": "psetf/ipv6:yes"}]}]}),
     ("custom_checks", "psetf: toolkit web over IPv6 on hosts with an IPv6 address",
      repr({"service_description": "perfSONAR services: web/https IPv6",
            "command_line": "check_tcp -6 -H $_HOSTADDRESS_6$ -p 443"}),
@@ -74,6 +82,9 @@ def run(config, dry_run=False, cmk=None):
             cmk.create_rule(ruleset, FOLDER, value_raw, description, conditions)
         created.append(description)
     if created and not dry_run:
+        # let CheckMK 2.5's automation-helper reload after the rule change before activating
+        # (an activation started inside that window can be lost; see discovery.run)
+        time.sleep(config.get("settle_seconds", 20))
         cmk.activate(config["site"], wait=config.get("activation_timeout", 600))
     return created
 

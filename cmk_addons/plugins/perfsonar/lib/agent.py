@@ -225,13 +225,14 @@ def main(argv=None, out=sys.stdout, session=None):
     session = session or make_session()
     address = target(host)
     budget = Budget(args.deadline)
-    summary = summary_section(host, address, args.timeout, session, budget)
+    # summary and pScheduler in parallel: a slow toolkit summary must not use up the pScheduler's time
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        summary_job = pool.submit(summary_section, host, address, args.timeout, session, budget)
+        pscheduler_job = pool.submit(pscheduler_section, host, address, args.timeout, session, budget=budget)
+        summary, pscheduler = summary_job.result(), pscheduler_job.result()
     summary["names"] = dns_names(host, address)
     out.write("<<<perfsonar_summary:sep(0)>>>\n%s\n" % json.dumps(summary, sort_keys=True))
-    out.write("<<<perfsonar_pscheduler:sep(0)>>>\n%s\n"
-              % json.dumps(pscheduler_section(host, address, args.timeout, session,
-                                              unreachable=summary.get("unreachable", False), budget=budget,
-                                              scheme=summary.get("scheme")), sort_keys=True))
+    out.write("<<<perfsonar_pscheduler:sep(0)>>>\n%s\n" % json.dumps(pscheduler, sort_keys=True))
     try:
         spool(args.spool, host, summary)
     except OSError as e:
