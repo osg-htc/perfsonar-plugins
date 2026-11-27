@@ -123,3 +123,22 @@ def test_the_analytics_status_documents_keep_n_streams_fields():
     doc = analytics.status_document("ps.example.org", NOW, analytics.parse_perfdata(perf))
     assert sorted(k for k in doc if k.startswith("ps_services")) == \
         sorted("ps_services_pscheduler_" + f for f in analytics.STATUS_FIELDS)
+
+
+def test_a_hanging_exporter_does_not_starve_the_pscheduler_statistics():
+    seen = {}
+
+    class Slow(FakeSession):
+        def get(self, url, timeout=None, headers=None, verify=None):
+            if agent.EXPORTER_PATH in url:
+                seen["timeout"] = timeout
+                raise agent.requests.exceptions.ReadTimeout("504 after 60 s")
+            return FakeSession.get(self, url, timeout, headers, verify)
+
+    buf = io.StringIO()
+    agent.target = lambda h: "192.0.2.10"
+    agent.dns_names = lambda h, a: []
+    agent.main(["ps.example.org", "--spool", "/nonexistent/dir"], out=buf, session=Slow(pages()))
+    s = sections(buf.getvalue())
+    assert seen["timeout"][1] <= agent.EXPORTER_TIMEOUT                 # the exporter gets at most 15 s
+    assert not s["perfsonar_exporter"]["ok"] and s["perfsonar_pscheduler"]["ok"]   # statistics from the API
