@@ -38,6 +38,10 @@ except Exception:  # pragma: no cover
 
 SUMMARY_PATH = "/toolkit/services/host.cgi?method=get_summary"
 EXPORTER_PATH = "/perfsonar_host_exporter/"   # perfsonar-host-metrics, perfSONAR 5.1+, HTTPS only
+# The exporter runs `pscheduler metrics` on the host for each request; where that hangs it answers 504
+# only after 60 s (QMUL, TRIUMF, Nov 2026) while the pScheduler API answers in < 1 s. A healthy exporter
+# answers in about 1 s, so give it 15 s and leave the rest of the deadline to the API fallback.
+EXPORTER_TIMEOUT = 15
 CONNECT_TIMEOUT = 15  # seconds to connect, TLS handshake included (urllib3 applies it to both); some toolkits take 5-7 s.
                       # Dead hosts must not hold up CheckMK's discovery batches (108 s per batch).
 PSCHEDULER_STATES = ("pending", "running", "overdue", "missed", "failed", "nonstart", "finished")
@@ -184,7 +188,8 @@ def parse_prometheus(text, prefix="perfsonar_"):
 def exporter_section(host, address, timeout, session=requests, budget=None):
     """The perfSONAR host exporter's perfsonar_* metrics (pScheduler, pSConfig, bundle, Lookup Service)."""
     try:
-        text, url, _scheme = get(host, address, EXPORTER_PATH, timeout, session, ("https",), budget)
+        text, url, _scheme = get(host, address, EXPORTER_PATH, min(timeout, EXPORTER_TIMEOUT), session,
+                                 ("https",), budget)
     except FetchError as e:
         return {"host": host, "ok": False, "error": str(e)}
     samples = parse_prometheus(text)
