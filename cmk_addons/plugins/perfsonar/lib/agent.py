@@ -21,6 +21,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import socket
 import ssl
 import sys
@@ -36,6 +37,7 @@ except Exception:  # pragma: no cover
     pass
 
 SUMMARY_PATH = "/toolkit/services/host.cgi?method=get_summary"
+EXPORTER_PATH = "/perfsonar_host_exporter/"   # perfsonar-host-metrics, perfSONAR 5.1+, HTTPS only
 CONNECT_TIMEOUT = 15  # seconds to connect, TLS handshake included (urllib3 applies it to both); some toolkits take 5-7 s.
                       # Dead hosts must not hold up CheckMK's discovery batches (108 s per batch).
 PSCHEDULER_STATES = ("pending", "running", "overdue", "missed", "failed", "nonstart", "finished")
@@ -157,6 +159,64 @@ def summary_section(host, address, timeout, session=requests, budget=None):
     return {"host": host, "ok": True, "url": url, "scheme": scheme, "data": fix_external_address(host, data)}
 
 
+_SAMPLE = re.compile(r'^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)')
+_LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
+
+
+def parse_prometheus(text, prefix="perfsonar_"):
+    """Prometheus text format -> [[name, {label: value}, number]] for the metrics starting with prefix."""
+    out = []
+    for line in text.splitlines():
+        if not line or line.startswith("#") or not line.startswith(prefix):
+            continue
+        m = _SAMPLE.match(line)
+        if not m:
+            continue
+        try:
+            value = float(m.group(3))
+        except ValueError:
+            continue
+        labels = {k: v.replace('\\"', '"') for k, v in _LABEL.findall(m.group(2) or "")}
+        out.append([m.group(1), labels, value])
+    return out
+
+
+def exporter_section(host, address, timeout, session=requests, budget=None):
+    """The perfSONAR host exporter's perfsonar_* metrics (pScheduler, pSConfig, bundle, Lookup Service)."""
+    try:
+        text, url, _scheme = get(host, address, EXPORTER_PATH, timeout, session, ("https",), budget)
+    except FetchError as e:
+        return {"host": host, "ok": False, "error": str(e)}
+    samples = parse_prometheus(text)
+    if not samples:
+        return {"host": host, "ok": False, "url": url, "error": "no perfsonar_* metrics in the answer"}
+    return {"host": host, "ok": True, "url": url, "samples": samples}
+
+
+# exporter metric -> the pScheduler statistics' names (those of /pscheduler/stat and the analytics documents)
+_RUNS = {"pending": "pending", "running": "running", "overdue": "overdue", "missed": "missed", "failed": "failed",
+         "nonstart": "nonstart", "finished": "finished", "on-deck": "on_deck", "cleanup": "cleanup",
+         "preempted": "preempted"}
+
+
+def pscheduler_from_exporter(host, exporter):
+    """The pScheduler statistics from the exporter, or None when it has none."""
+    stats = {}
+    for name, labels, value in exporter.get("samples") or []:
+        state = labels.get("state")
+        if name == "perfsonar_pscheduler_runs" and state in _RUNS:
+            stats[_RUNS[state]] = int(value)
+        elif name == "perfsonar_pscheduler_archiving" and state in ("backlog", "upcoming"):
+            stats["archiver_backlog" if state == "backlog" else "archiving_upcoming"] = int(value)
+        elif name == "perfsonar_pscheduler_http_queue" and state in ("backlog", "length"):
+            stats["http_queue_" + state] = int(value)
+        elif name == "perfsonar_pscheduler_paused":
+            stats["paused"] = int(value)
+    if "pending" not in stats:
+        return None
+    return {"host": host, "ok": True, "stats": stats, "source": "exporter"}
+
+
 def pscheduler_section(host, address, timeout, session=requests, unreachable=False, budget=None, scheme=None):
     if unreachable:   # neither HTTPS nor HTTP answered for the summary: don't wait on the same ports again
         return {"host": host, "ok": False, "error": "Error connecting to pscheduler API (host unreachable)"}
@@ -225,14 +285,21 @@ def main(argv=None, out=sys.stdout, session=None):
     session = session or make_session()
     address = target(host)
     budget = Budget(args.deadline)
-    # summary and pScheduler in parallel: a slow toolkit summary must not use up the pScheduler's time
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    # summary and exporter in parallel; the pScheduler statistics come from the exporter when it has
+    # them, else from /pscheduler/stat, started as soon as the exporter has answered (not after a
+    # slow summary, which must not use up the pScheduler's time)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         summary_job = pool.submit(summary_section, host, address, args.timeout, session, budget)
-        pscheduler_job = pool.submit(pscheduler_section, host, address, args.timeout, session, budget=budget)
-        summary, pscheduler = summary_job.result(), pscheduler_job.result()
+        exporter = pool.submit(exporter_section, host, address, args.timeout, session, budget).result()
+        pscheduler = pscheduler_from_exporter(host, exporter) if exporter.get("ok") else None
+        pscheduler_job = None if pscheduler else \
+            pool.submit(pscheduler_section, host, address, args.timeout, session, budget=budget)
+        summary = summary_job.result()
+        pscheduler = pscheduler or pscheduler_job.result()
     summary["names"] = dns_names(host, address)
     out.write("<<<perfsonar_summary:sep(0)>>>\n%s\n" % json.dumps(summary, sort_keys=True))
     out.write("<<<perfsonar_pscheduler:sep(0)>>>\n%s\n" % json.dumps(pscheduler, sort_keys=True))
+    out.write("<<<perfsonar_exporter:sep(0)>>>\n%s\n" % json.dumps(exporter, sort_keys=True))
     try:
         spool(args.spool, host, summary)
     except OSError as e:

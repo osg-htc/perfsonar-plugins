@@ -9,6 +9,11 @@ mkdir -p "$PLUGINS"
 cp -r /src/cmk_addons/plugins/perfsonar "$PLUGINS/"
 find "$PLUGINS" -name __pycache__ -prune -exec rm -rf {} +
 chown -R "$SITE:$SITE" "/omd/sites/$SITE/local"
+# refuse to package plugins CheckMK cannot load (argument names, rulesets, server-side calls);
+# the validator asks the site's automation service, so the site must be running
+omd start "$SITE" >/dev/null
+su - "$SITE" -c "cmk-validate-plugins"
+omd stop "$SITE" >/dev/null
 su - "$SITE" -c "mkp template psetf_perfsonar > /tmp/manifest.raw"
 VERSION="$VERSION" python3 - <<'PY'
 import ast, os

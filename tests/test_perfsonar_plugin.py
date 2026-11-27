@@ -74,7 +74,8 @@ def test_agent_uses_https_and_reports_both_sections(tmp_path):
     session = FakeSession(pages(), http_down=True)
     s = run_agent(session, tmp_path)
     assert s["perfsonar_summary"]["ok"] and s["perfsonar_summary"]["url"].startswith("https://192.0.2.10/")
-    assert len(session.calls) == 9 and not any(u.startswith("http://") for u, _h, _v in session.calls)  # https first
+    # https first: summary, exporter (none here), the pScheduler statistics
+    assert len(session.calls) == 10 and not any(u.startswith("http://") for u, _h, _v in session.calls)
     assert s["perfsonar_pscheduler"]["stats"] == {"pending": 0, "running": 1, "overdue": 2, "missed": 3,
                                                   "failed": 4, "nonstart": 5, "finished": 6, "archiver_backlog": 42}
     assert all(h == "ps.example.org" and v is False for _u, h, v in session.calls)   # Host header, no verify
@@ -88,7 +89,7 @@ def test_an_http_only_host_is_asked_over_http_after_one_https_try(tmp_path):
     s = run_agent(session, tmp_path)
     assert s["perfsonar_summary"]["scheme"] == "http" and s["perfsonar_pscheduler"]["ok"]
     https = [u for u, _h, _v in session.calls if u.startswith("https://")]
-    assert len(https) == 2                  # summary and the first pScheduler request try https, the rest use http
+    assert len(https) == 3                  # summary, exporter (https only) and the first pScheduler request
 
 
 def test_https_uses_classic_tls_groups():
@@ -109,7 +110,7 @@ def test_agent_reports_an_unreachable_host_without_spooling(tmp_path):
     s = run_agent(session, tmp_path)
     assert not s["perfsonar_summary"]["ok"] and "Connection failed" in s["perfsonar_summary"]["error"]
     assert not s["perfsonar_pscheduler"]["ok"] and "Error connecting" in s["perfsonar_pscheduler"]["error"]
-    assert len(session.calls) == 4          # https + http for the summary and for the pScheduler API, in parallel
+    assert len(session.calls) == 5          # https + http for summary and pScheduler API, https for the exporter
     assert os.listdir(str(tmp_path)) == []
 
 

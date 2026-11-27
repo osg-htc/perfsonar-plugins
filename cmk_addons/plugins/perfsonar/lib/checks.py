@@ -17,7 +17,10 @@ CONFIG_HOSTS = ("psconfig.opensciencegrid.org", "psconfig-itb.opensciencegrid.or
                 "meshconfig.grid.iu.edu")
 TARGET_MEMORY_GB = 4
 PSCHEDULER_METRICS = ("pending", "running", "overdue", "missed", "failed", "nonstart", "finished",
-                      "archiver_backlog")
+                      "archiver_backlog",
+                      # only from the perfSONAR host exporter
+                      "on_deck", "cleanup", "preempted", "archiving_upcoming", "http_queue_backlog",
+                      "http_queue_length", "paused")
 
 
 def parse(string_table):
@@ -32,16 +35,55 @@ def _data(section):
     return (section or {}).get("data") if (section or {}).get("ok") else None
 
 
-def check_summary(section):
+# ---------------------------------------------------------------- the perfSONAR host exporter (5.1+)
+def exporter_view(section):
+    """The exporter section in a usable shape, or None when the exporter did not answer."""
+    if not (section or {}).get("ok"):
+        return None
+    view = {"bundle": None, "registered": None, "psconfig": {}}
+    for name, labels, value in section.get("samples") or []:
+        if name == "perfsonar_bundle":
+            view["bundle"] = "%s %s" % (labels.get("type", "?"), labels.get("version", "?"))
+        elif name == "perfsonar_host_registered":
+            view["registered"] = value
+        elif name.startswith("perfsonar_psconfig_"):
+            rest = name[len("perfsonar_psconfig_"):]
+            for kind in ("agent_start_time", "agent_end_time", "remote", "tasks", "agent"):
+                if rest.endswith("_" + kind):
+                    agent = view["psconfig"].setdefault(rest[:-len(kind) - 1], {"remotes": []})
+                    if kind == "remote":
+                        agent["remotes"].append(labels.get("url", ""))
+                    elif kind == "tasks":
+                        if "url" not in labels:
+                            agent["tasks"] = value
+                    elif kind == "agent":
+                        agent["client_uuid"] = labels.get("client_uuid")
+                    else:
+                        agent[kind] = value
+                    break
+    return view
+
+
+def _bundle_note(exporter):
+    view = exporter_view(exporter)
+    return " (%s)" % view["bundle"] if view and view["bundle"] else ""
+
+
+def check_summary(section, exporter=None):
     if not section:
         return [(UNKNOWN, "No data from the special agent", "", [])]
     if not section.get("ok"):
-        return [(CRIT, section.get("error") or "Toolkit summary not available", DOCS, [])]
-    return [(OK, "Toolkit metadata successfully retrieved", section.get("url", ""), [])]
+        error = section.get("error") or "Toolkit summary not available"
+        if exporter_view(exporter) is not None and "404" in error:
+            # perfSONAR is dropping the toolkit summary (perhaps from 5.3); the exporter still answers
+            return [(WARN, "Toolkit summary not served%s; host metrics come from the exporter" % _bundle_note(exporter),
+                     error, [])]
+        return [(CRIT, error, DOCS, [])]
+    return [(OK, "Toolkit metadata successfully retrieved%s" % _bundle_note(exporter), section.get("url", ""), [])]
 
 
-def check_http(section):
-    if _data(section) is None:
+def check_http(section, exporter=None):
+    if _data(section) is None and exporter_view(exporter) is None:
         return [(CRIT, "Toolkit homepage unreachable", DOCS, [])]
     return [(OK, "Toolkit homepage reachable", "", [])]
 
@@ -54,19 +96,23 @@ def _is_ip(text):
         return False
 
 
-def check_meshes(section, config_hosts=CONFIG_HOSTS):
-    data = _data(section)
-    if data is None:
+def check_meshes(section, config_hosts=CONFIG_HOSTS, exporter=None):
+    data = _data(section) or {}
+    view = exporter_view(exporter)
+    if view is not None and "pscheduler" in view["psconfig"]:
+        # the URLs the pSConfig pScheduler agent actually uses (exporter), else the toolkit summary's
+        configured = view["psconfig"]["pscheduler"]["remotes"]
+    elif _data(section) is None:
         return [(UNKNOWN, "Masked by perfSONAR json summary", "", [])]
-    key = "templates" if "templates" in data else "meshes"
-    configured = data.get(key)
+    else:
+        configured = data.get("templates" if "templates" in data else "meshes")
     if configured is None:
         return [(CRIT, "Unable to parse mesh configuration", DOCS, [])]
     if not configured:
         return [(CRIT, "No meshes configured", DOCS, [])]
-    host = section.get("host", "")
+    host = (section or {}).get("host", "")
     names = {host, ((data.get("external_address") or {}).get("dns_name") or "").strip().lower()}
-    names |= set(section.get("names") or [])     # DNS names of the host (canonical, reverse), from the agent
+    names |= set((section or {}).get("names") or [])     # DNS names of the host (canonical, reverse), from the agent
     names -= {""}
     listing = "Configured: " + ", ".join(configured)
     for url in configured:
@@ -117,4 +163,45 @@ def check_pscheduler(section):
     stats = section.get("stats") or {}
     metrics = [("pscheduler_" + name, stats[name]) for name in PSCHEDULER_METRICS if name in stats]
     details = ", ".join("%s: %s" % (name, stats[name]) for name in PSCHEDULER_METRICS if name in stats)
-    return [(OK, "pscheduler stats retrieved", details, metrics)]
+    source = "perfSONAR host exporter" if section.get("source") == "exporter" else "pScheduler API /stat"
+    return [(OK, "pscheduler stats retrieved", "Source: %s\n%s" % (source, details), metrics)]
+
+
+PSCONFIG_AGE_WARN, PSCONFIG_AGE_CRIT = 6 * 3600, 24 * 3600   # the agent normally runs every hour
+
+
+def check_psconfig_agent(exporter, now):
+    """Is the pSConfig pScheduler agent running, and does it have a remote configuration?"""
+    view = exporter_view(exporter)
+    if view is None:
+        return [(UNKNOWN, "perfSONAR host exporter not available", "", [])]
+    agent = view["psconfig"].get("pscheduler")
+    if not agent:
+        return [(CRIT, "No pSConfig pScheduler agent reported by the exporter", "", [])]
+    remotes, tasks, end = agent.get("remotes") or [], agent.get("tasks"), agent.get("agent_end_time")
+    details = "Remote configurations:\n" + "\n".join(remotes) if remotes else "No remote configurations"
+    metrics = [("psconfig_remotes", len(remotes))]
+    if tasks is not None:
+        metrics.append(("psconfig_tasks", tasks))
+    if end is None:
+        return [(WARN, "pSConfig agent has not reported a completed run", details, metrics)]
+    age = max(0.0, now - end)
+    metrics.append(("psconfig_agent_age", age))
+    state = CRIT if age > PSCONFIG_AGE_CRIT else WARN if age > PSCONFIG_AGE_WARN else OK
+    summary = "Last pSConfig agent run %.1f h ago, %d remote configuration(s)" % (age / 3600.0, len(remotes))
+    if not remotes:
+        state = max(state, WARN)
+        summary += " (none: this host gets no central mesh configuration)"
+    return [(state, summary, details, metrics)]
+
+
+def check_lookup_registration(exporter):
+    view = exporter_view(exporter)
+    if view is None:
+        return [(UNKNOWN, "perfSONAR host exporter not available", "", [])]
+    if view["registered"] is None:
+        return [(UNKNOWN, "The exporter does not report Lookup Service registration", "", [])]
+    if view["registered"] >= 1:
+        return [(OK, "Registered in the perfSONAR Lookup Service", "", [])]
+    return [(WARN, "Not registered in the perfSONAR Lookup Service", "Hosts that do not register are missing from "
+             "pSConfig/PWA host lists and from Lookup Service based tools.", [])]
