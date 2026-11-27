@@ -49,11 +49,14 @@ class Failed(Exception):
 class API(object):
     """GETs and POSTs to one host's pScheduler API over HTTPS.
 
-    To the address chosen by pick_address (see there), with the host name as Host header."""
+    By host name, so TLS carries the name (SNI) and Host matches it, as troubleshoot does: some
+    toolkits answer 421 Misdirected Request without SNI (ps-bandwidth.hepnetcanada.ca). The address
+    family is pinned to the one pick_address found working (see there)."""
 
     def __init__(self, host, address, session, deadline, timeout=30):
         self.host, self.address, self.session, self.deadline, self.timeout = host, address, session, deadline, timeout
-        self.base = "https://%s/pscheduler" % ("[%s]" % address if ":" in address else address)
+        self.base = "https://%s/pscheduler" % host
+        pin_family(address)
 
     def _url(self, path_or_url):
         if path_or_url.startswith("http"):            # an href the server returned: keep its path, use our address
@@ -61,15 +64,17 @@ class API(object):
             return urlunsplit(("https", urlsplit(self.base).netloc, parts.path, parts.query, ""))
         return self.base + path_or_url
 
-    def _timeout(self):
+    def _timeout(self, read=None):
         left = self.deadline - time.time()
         if left < 1:
             raise Failed("Gave up: the check's time limit was reached")
-        return (min(15, left), min(self.timeout, left))
+        return (min(15, left), min(read or self.timeout, left))
 
     def get(self, path_or_url, params=None, json_body=True):
+        # wait-merged: the server holds the answer until the run's result is in, so allow the time left
+        read = self.deadline - time.time() if (params or {}).get("wait-merged") else None
         r = self.session.get(self._url(path_or_url), params=params, headers={"Host": self.host},
-                             timeout=self._timeout(), verify=False)
+                             timeout=self._timeout(read), verify=False)
         return r.status_code, (_json(r) if json_body else r.text)
 
     def post(self, path, body):
@@ -106,6 +111,18 @@ def pick_address(host, port=443, timeout=5):
         finally:
             s.close()
     return host
+
+
+def pin_family(address):
+    """Make urllib3 resolve names to the family of `address` only (one host per check process)."""
+    try:
+        import urllib3.util.connection as connection
+    except ImportError:  # pragma: no cover
+        return
+    if ":" in address:
+        connection.allowed_gai_family = lambda: socket.AF_INET6
+    elif address.replace(".", "").isdigit():
+        connection.allowed_gai_family = lambda: socket.AF_INET
 
 
 def _json(r):

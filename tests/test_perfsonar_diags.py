@@ -60,7 +60,7 @@ class FakePScheduler(object):
         return routes.get(path, Response(404, "not found"))
 
     def get(self, url, params=None, headers=None, timeout=None, verify=None):
-        assert headers["Host"] == HOST and url.startswith("https://192.0.2.10/")   # address, Host header
+        assert headers["Host"] == HOST and url.startswith("https://%s/" % HOST)   # by name: SNI and Host match
         return self._route("GET", url, params)
 
     def post(self, url, data=None, headers=None, timeout=None, verify=None):
@@ -80,7 +80,15 @@ def test_a_healthy_host_passes_with_an_idle_test_and_statistics():
     assert "runs_pending=7" in first and "idle_test_seconds=" in first
     assert "Idle test: finished and archived" in output
     assert server.posted[0]["test"]["type"] == "idle" and len(server.posted[0]["archives"]) == 2
-    assert all(u.startswith("https://192.0.2.10/") for _m, u in server.requests)   # hrefs rewritten to the address
+    assert all(u.startswith("https://%s/" % HOST) for _m, u in server.requests)   # hrefs kept on the name
+
+
+def test_the_picked_address_family_is_pinned():
+    import urllib3.util.connection as connection
+    run()                                              # address 192.0.2.10
+    assert connection.allowed_gai_family() == diags.socket.AF_INET
+    diags.pin_family("2001:db8::10")
+    assert connection.allowed_gai_family() == diags.socket.AF_INET6
 
 
 def test_an_unsynchronized_clock_is_a_warning():
