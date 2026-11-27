@@ -1,7 +1,8 @@
-FROM ghcr.io/osg-htc/cmk-etf:main
+# the cmk-etf release this image is built on (it carries the CheckMK version); see RELEASING.md
+ARG CMK_ETF_VERSION=1.0.0
+FROM ghcr.io/osg-htc/cmk-etf:${CMK_ETF_VERSION}
 LABEL maintainer="Marian Babik <Marian.Babik@cern.ch>"
 LABEL description="ETF perfSONAR"
-LABEL version="0.1"
 
 ARG monitoring_plugins="nagios-plugins"
 
@@ -17,7 +18,10 @@ RUN mkdir -p /etc/ncgx/conf.d/ && ln -s /omd/sites/${CHECK_MK_SITE}/etc/check_mk
 RUN yum -y install https://github.com/OpenIDC/mod_auth_openidc/releases/download/v2.4.16.10/mod_auth_openidc-2.4.16.10-1.el9.x86_64.rpm 
 
 # perfsonar tools
-RUN curl -s https://raw.githubusercontent.com/perfsonar/project/master/install-perfsonar | sh -s - tools
+# installer taken from a fixed commit of perfsonar/project (2026-05-18, "Added --no-upgrade switch")
+ARG PERFSONAR_INSTALLER_REF=6252cce3e9a3e1a101ee61b5b9902302dbd8e6dd
+RUN curl -fsS -o /tmp/install-perfsonar https://raw.githubusercontent.com/perfsonar/project/${PERFSONAR_INSTALLER_REF}/install-perfsonar \
+    && sh /tmp/install-perfsonar tools && rm -f /tmp/install-perfsonar
 
 # python path fix
 COPY ./config/sitecustomize.py /omd/sites/etf/lib/python3.12/
