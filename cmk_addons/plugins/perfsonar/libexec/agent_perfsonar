@@ -1,0 +1,3 @@
+#!/bin/bash
+# CheckMK special agent for one perfSONAR host; the logic is in lib/agent.py
+exec python3 -m cmk_addons.plugins.perfsonar.lib.agent "$@"
