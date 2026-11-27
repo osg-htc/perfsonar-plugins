@@ -34,7 +34,8 @@ COPY ./src/check_ps /usr/lib64/nagios/plugins/
 COPY ./src/check_es /usr/lib64/nagios/plugins/
 COPY ./src/check_ps_psched /usr/lib64/nagios/plugins/
 COPY ./src/pscheduler_check /usr/local/bin/
-RUN chmod 755 /usr/lib64/nagios/plugins/check* /usr/local/bin/pscheduler_check
+COPY ./src/cmk_user_profiles /usr/local/bin/
+RUN chmod 755 /usr/lib64/nagios/plugins/check* /usr/local/bin/pscheduler_check /usr/local/bin/cmk_user_profiles
 COPY ./src/wlcg_ps.cfg /etc/ncgx/metrics.d/
 COPY ./src/etf_ps_plugin.py /usr/lib/ncgx/x_plugins/
 

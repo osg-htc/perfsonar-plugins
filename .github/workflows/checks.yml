@@ -24,7 +24,7 @@ jobs:
 
       - name: Python sources and ncgx configuration parse
         run: |
-          for f in src/check_es src/check_ps src/check_ps_psched \
+          for f in src/check_es src/check_ps src/check_ps_psched src/cmk_user_profiles \
                    src/etf_ps_plugin.py config/sitecustomize.py src/*.cfg; do
             python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" || exit 1
           done
