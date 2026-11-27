@@ -88,3 +88,27 @@ These files come from the host, so a recreate keeps them:
 | `/usr/local/perfdata/` | `.../var/pnp4nagios/perfdata` | performance graphs |
 | `/var/spool/nstream/outgoing` | same | results handed to n-stream |
 | `/opt/caddy/etc/Caddyfile` | caddy container | TLS for psetf.aglt2.org. It redirects the other host names to that name, and drops any client-sent `X-Remote-User` (`header_up -X-Remote-User`) |
+
+## psetf on CheckMK 2.5 (phase 2)
+
+The same release also carries psetf for CheckMK 2.5. It has three parts.
+
+- **`psetf_perfsonar-X.Y.Z.mkp`:** a CheckMK extension package, attached to the GitHub release by the MKP workflow. It contains `cmk_addons/plugins/perfsonar`: the special agent, the checks, the pScheduler diags active check and the analytics exporter. To build one locally, run `packaging/build-mkp.sh X.Y.Z`; it needs podman or docker.
+- **`psetf/`:** discovery and the site rules. Both run on the container host and talk to the site's REST API: `python3 -m psetf.discovery`, `python3 -m psetf.site_setup`.
+- **`deploy/install-site.sh`:** installs an MKP into a site running in a container, and sets the site-level pieces an MKP cannot carry:
+  - the exporter cron file;
+  - `etc/psetf/exporter.json`, mode `file` unless already configured;
+  - Nagios `service_check_timeout` of 300 s, for the 240 s diags check;
+  - reloads of Apache and the core.
+
+  It is idempotent: the same version is left alone, and an older enabled version is disabled.
+
+To install or upgrade on a site:
+
+```
+deploy/install-site.sh CONTAINER SITE psetf_perfsonar-X.Y.Z.mkp
+python3 -m psetf.site_setup --config CONFIG        # rules: created, or updated if changed
+python3 -m psetf.discovery  --config CONFIG        # hosts and labels
+```
+
+**The exporter sends to the analytics collector only in mode `send`.** Only the production psetf uses it; switch at the same moment n-stream stops, or the analytics get every document twice.
