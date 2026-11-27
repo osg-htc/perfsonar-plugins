@@ -50,6 +50,10 @@ if [[ -d /opt/omd/sites/etf/etc/nagios/conf.d/wlcg/ ]]; then
     rm -rf /opt/omd/sites/etf/etc/nagios/conf.d/wlcg/
 fi
 
+# CILogon users (in users.mk, on the host mount) need a CheckMK profile marker, which a
+# recreate loses; without it CheckMK rejects their REMOTE_USER and shows its login form.
+su $CHECK_MK_SITE -c "/usr/bin/python3 /usr/local/bin/cmk_user_profiles" || echo "WARNING: cmk_user_profiles failed"
+
 cp /etc/ncgx/templates/generic/handlers.cfg /opt/omd/sites/etf/etc/nagios/conf.d/
 omd start
 rm -f /opt/omd/sites/etf/etc/nagios/conf.d/handlers.cfg 

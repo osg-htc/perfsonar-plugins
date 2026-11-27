@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Make sure every CheckMK user in users.mk can log in through the web server (CILogon).
+
+After CILogon, Apache sets REMOTE_USER, and CheckMK 2.3 accepts it only if
+cmk.gui.userdb.user_exists() is true: the user has var/check_mk/web/<user>/serial.mk
+(or transids.mk), or an entry in the site's etc/htpasswd. Both live inside the
+container and are lost on every recreate, while users.mk is on the host mount
+(/opt/cmk/check_mk) and survives. Without this, CILogon users land on CheckMK's
+own login form after each deploy.
+
+Creates <profile dir>/<user>/serial.mk (content "0", as CheckMK writes it) for each
+user in users.mk that has neither marker. Run as the site user at container start.
+"""
+import os
+import sys
+
+USERS_MK = "/omd/sites/etf/etc/check_mk/multisite.d/wato/users.mk"
+PROFILE_DIR = "/omd/sites/etf/var/check_mk/web"
+
+
+def load_users(path):
+    """The user IDs defined in a CheckMK users.mk (it updates multisite_users)."""
+    namespace = {"multisite_users": {}}
+    with open(path) as f:
+        exec(f.read(), namespace)
+    return sorted(namespace["multisite_users"])
+
+
+def ensure_profiles(users, profile_dir):
+    """Create serial.mk for users without a profile marker; returns the users it created."""
+    created = []
+    for user in users:
+        if not user or "/" in user or user in (".", ".."):
+            continue
+        path = os.path.join(profile_dir, user)
+        if any(os.path.exists(os.path.join(path, marker)) for marker in ("serial.mk", "transids.mk")):
+            continue
+        os.makedirs(path, mode=0o700, exist_ok=True)
+        serial = os.path.join(path, "serial.mk")
+        with open(serial, "w") as f:
+            f.write("0")
+        os.chmod(serial, 0o660)
+        created.append(user)
+    return created
+
+
+def main(argv):
+    users_mk = argv[1] if len(argv) > 1 else USERS_MK
+    profile_dir = argv[2] if len(argv) > 2 else PROFILE_DIR
+    if not os.path.exists(users_mk):
+        print("cmk_user_profiles: %s not found, nothing to do" % users_mk)
+        return 0
+    created = ensure_profiles(load_users(users_mk), profile_dir)
+    print("cmk_user_profiles: created profiles for %s" % (", ".join(created) or "nobody (all present)"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
