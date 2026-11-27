@@ -3,6 +3,8 @@
 The service names are those of the former ETF checks, so states, history and the old
 performance graphs carry over. The logic is in ..lib.checks.
 """
+import time
+
 from cmk.agent_based.v2 import (
     AgentSection,
     CheckPlugin,
@@ -37,18 +39,37 @@ def _discover(section) -> DiscoveryResult:
 
 agent_section_perfsonar_summary = AgentSection(name="perfsonar_summary", parse_function=_parse)
 agent_section_perfsonar_pscheduler = AgentSection(name="perfsonar_pscheduler", parse_function=_parse)
+agent_section_perfsonar_exporter = AgentSection(name="perfsonar_exporter", parse_function=_parse)
 
 
-def _check_summary(section) -> CheckResult:
-    yield from _results(checks.check_summary(section))
+def _discover_both(section_perfsonar_summary, section_perfsonar_exporter) -> DiscoveryResult:
+    yield Service()
 
 
-def _check_http(section) -> CheckResult:
-    yield from _results(checks.check_http(section))
+def _discover_exporter(section_perfsonar_exporter) -> DiscoveryResult:
+    # only where the perfSONAR host exporter answers (perfSONAR 5.1+, not blocked)
+    if checks.exporter_view(section_perfsonar_exporter) is not None:
+        yield Service()
 
 
-def _check_meshes(section) -> CheckResult:
-    yield from _results(checks.check_meshes(section))
+def _check_summary(section_perfsonar_summary, section_perfsonar_exporter) -> CheckResult:
+    yield from _results(checks.check_summary(section_perfsonar_summary, section_perfsonar_exporter))
+
+
+def _check_http(section_perfsonar_summary, section_perfsonar_exporter) -> CheckResult:
+    yield from _results(checks.check_http(section_perfsonar_summary, section_perfsonar_exporter))
+
+
+def _check_meshes(section_perfsonar_summary, section_perfsonar_exporter) -> CheckResult:
+    yield from _results(checks.check_meshes(section_perfsonar_summary, exporter=section_perfsonar_exporter))
+
+
+def _check_psconfig_agent(section_perfsonar_exporter) -> CheckResult:
+    yield from _results(checks.check_psconfig_agent(section_perfsonar_exporter, time.time()))
+
+
+def _check_lookup(section_perfsonar_exporter) -> CheckResult:
+    yield from _results(checks.check_lookup_registration(section_perfsonar_exporter))
 
 
 def _check_hardware(section) -> CheckResult:
@@ -60,16 +81,27 @@ def _check_pscheduler(section) -> CheckResult:
 
 
 check_plugin_perfsonar_summary = CheckPlugin(
-    name="perfsonar_summary", service_name="perfSONAR json summary", sections=["perfsonar_summary"],
-    discovery_function=_discover, check_function=_check_summary)
+    name="perfsonar_summary", service_name="perfSONAR json summary",
+    sections=["perfsonar_summary", "perfsonar_exporter"],
+    discovery_function=_discover_both, check_function=_check_summary)
 
 check_plugin_perfsonar_http = CheckPlugin(
-    name="perfsonar_http", service_name="perfSONAR services: http/https", sections=["perfsonar_summary"],
-    discovery_function=_discover, check_function=_check_http)
+    name="perfsonar_http", service_name="perfSONAR services: http/https",
+    sections=["perfsonar_summary", "perfsonar_exporter"],
+    discovery_function=_discover_both, check_function=_check_http)
 
 check_plugin_perfsonar_meshes = CheckPlugin(
-    name="perfsonar_meshes", service_name="perfSONAR configuration: meshes", sections=["perfsonar_summary"],
-    discovery_function=_discover, check_function=_check_meshes)
+    name="perfsonar_meshes", service_name="perfSONAR configuration: meshes",
+    sections=["perfsonar_summary", "perfsonar_exporter"],
+    discovery_function=_discover_both, check_function=_check_meshes)
+
+check_plugin_perfsonar_psconfig_agent = CheckPlugin(
+    name="perfsonar_psconfig_agent", service_name="perfSONAR configuration: pSConfig agent",
+    sections=["perfsonar_exporter"], discovery_function=_discover_exporter, check_function=_check_psconfig_agent)
+
+check_plugin_perfsonar_lookup = CheckPlugin(
+    name="perfsonar_lookup", service_name="perfSONAR registration: Lookup Service",
+    sections=["perfsonar_exporter"], discovery_function=_discover_exporter, check_function=_check_lookup)
 
 check_plugin_perfsonar_hardware = CheckPlugin(
     name="perfsonar_hardware", service_name="perfSONAR hardware check", sections=["perfsonar_summary"],

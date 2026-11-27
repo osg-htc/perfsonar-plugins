@@ -35,6 +35,9 @@ log = logging.getLogger("psetf.exporter")
 DEFAULTS = {"mode": "file", "ls_uri": "http://ps-collection.atlas-ml.org", "measurement_agent": "psetf.aglt2.org",
             "meta_every": 86400, "meta_destination": "/exchange/osg.status.raw/perfsonar.summary.meta"}
 PSCHEDULER_SERVICE = "perfSONAR services: pscheduler"
+# the fields n-stream's status documents carried; the check also reports more (from the perfSONAR
+# host exporter), which stay out of the analytics documents
+STATUS_FIELDS = ("pending", "running", "overdue", "missed", "failed", "nonstart", "finished", "archiver_backlog")
 
 
 # ---------------------------------------------------------------- meta: n-stream's backends/meta.py, unchanged
@@ -150,6 +153,8 @@ def parse_perfdata(perf_data):
         name, _, rest = item.partition("=")
         value = rest.split(";", 1)[0]
         if not name.startswith("pscheduler_"):
+            continue
+        if name[len("pscheduler_"):] not in STATUS_FIELDS:
             continue
         try:
             out[name[len("pscheduler_"):]] = float(value)
