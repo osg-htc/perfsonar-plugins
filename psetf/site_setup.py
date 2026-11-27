@@ -30,6 +30,12 @@ RULES = [
      "('tcp', 443)", None),
     ("active_checks:icmp", "psetf: PING service (kept for firewall hints; the host check is TCP 443)",
      "{}", None),
+    # On dual-stack hosts CheckMK adds its own "PING IPv6" with a ping-only template that drops the
+    # performance data (no graphs). A service of that name from this rule replaces it, with graphs.
+    ("active_checks:icmp", "psetf: PING IPv6 on dual-stack hosts (with graphs, replacing CheckMK's own)",
+     repr({"description": "PING IPv6", "address": "all_ipv6addresses"}),
+     {"host_label_groups": [{"operator": "and", "label_group": [{"operator": "and", "label": "psetf/ipv4:yes"},
+                                                                 {"operator": "and", "label": "psetf/ipv6:yes"}]}]}),
     ("special_agents:perfsonar", "psetf: perfSONAR toolkit special agent for all discovered hosts",
      "{'timeout': 60.0}", None),
     # the special agent runs with the "Check_MK" service: every 60 min, as check_ps did on the ETF psetf
