@@ -236,12 +236,15 @@ def check_lookup_registration(exporter):
 PSCHEDULER_UNITS = ("pscheduler-scheduler.service", "pscheduler-runner.service", "pscheduler-archiver.service",
                     "pscheduler-ticker.service")
 PSCONFIG_UNIT = "psconfig-pscheduler-agent.service"
+# units that run once at boot: normally inactive; a failure means degraded tuning, not a broken host
+ONESHOT_UNITS = ("perfsonar-configure_nic_parameters.service", "perfsonar-generate_motd.service",
+                 "perfsonar-startup.service")
 
 
 def check_units(node):
-    """perfSONAR systemd units: failed is CRIT, a pScheduler unit missing or not active is CRIT,
-    the pSConfig pScheduler agent not active is WARN. One-shot units that are normally inactive
-    (NIC tuning, motd, startup) are no finding."""
+    """perfSONAR systemd units: failed is CRIT (WARN for the one-shot boot units: NIC tuning, motd,
+    startup), a pScheduler unit missing or not active is CRIT, the pSConfig pScheduler agent not
+    active is WARN. One-shot units being inactive is normal and no finding."""
     if not _node(node):
         return [(UNKNOWN, "node_exporter not available", "", [])]
     units = node.get("units") or {}
@@ -250,7 +253,7 @@ def check_units(node):
     crit, warn = [], []
     for unit, state in sorted(units.items()):
         if state == "failed":
-            crit.append("%s failed" % unit)
+            (warn if unit in ONESHOT_UNITS else crit).append("%s failed" % unit)
     for unit in PSCHEDULER_UNITS:
         if units.get(unit) is None:
             crit.append("%s missing" % unit)

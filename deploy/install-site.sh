@@ -32,6 +32,9 @@ for old in $(mkp list 2>/dev/null | awk '$1 == "psetf_perfsonar" && $2 != v && /
     mkp disable psetf_perfsonar "$old"
 done
 mkp enable psetf_perfsonar "$VERSION" 2>/dev/null || true     # already enabled when freshly added
+# the automation helper (service discovery, activation) keeps plugins loaded: restart it, or a
+# discovery right after an upgrade still runs the old plugins and finds none of the new services
+omd restart automation-helper >/dev/null
 mkp list | grep psetf_perfsonar
 
 # exporter: every 5 minutes; mode "file" unless etc/psetf/exporter.json already says otherwise

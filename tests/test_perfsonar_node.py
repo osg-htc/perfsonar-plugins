@@ -67,6 +67,9 @@ def test_units():
     assert state == checks.CRIT and "pscheduler-archiver.service failed" in summary
     assert checks.check_units(node(psconfig="inactive"))[0][:2] == \
         (checks.WARN, "psconfig-pscheduler-agent.service inactive")
+    nic = node()
+    nic["units"]["perfsonar-configure_nic_parameters.service"] = "failed"
+    assert checks.check_units(nic)[0][:2] == (checks.WARN, "perfsonar-configure_nic_parameters.service failed")
     missing = node()
     del missing["units"]["pscheduler-ticker.service"]
     assert "pscheduler-ticker.service missing" in checks.check_units(missing)[0][1]
