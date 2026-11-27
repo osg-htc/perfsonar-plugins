@@ -33,8 +33,6 @@ rm -rf $RPM_BUILD_ROOT
 %files
 %defattr(-,root,root,-)
 %attr(0755,root,root) /usr/lib64/nagios/plugins/check_ps
-%attr(0755,root,root) /usr/lib64/nagios/plugins/check_rsv
-%attr(0755,root,root) /usr/lib64/nagios/plugins/check_ps_es
 %attr(0755,root,root) /usr/lib64/nagios/plugins/check_ps_psched
 
 %changelog

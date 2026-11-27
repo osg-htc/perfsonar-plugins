@@ -31,14 +31,10 @@ RUN sed '1 s|^.*$|#!/usr/bin/env python3.9|' -i /usr/libexec/pscheduler/commands
 
 # Install
 COPY ./src/check_ps /usr/lib64/nagios/plugins/
-COPY ./src/check_ps_es /usr/lib64/nagios/plugins/
 COPY ./src/check_es /usr/lib64/nagios/plugins/
 COPY ./src/check_ps_psched /usr/lib64/nagios/plugins/
-COPY ./src/check_rsv /usr/lib64/nagios/plugins/
-COPY ./src/check_ps_report /usr/lib64/nagios/plugins/
 COPY ./src/pscheduler_check /usr/local/bin/
 RUN chmod 755 /usr/lib64/nagios/plugins/check* /usr/local/bin/pscheduler_check
-COPY ./src/local_checks.cfg /etc/ncgx/conf.d/
 COPY ./src/wlcg_ps.cfg /etc/ncgx/metrics.d/
 COPY ./src/etf_ps_plugin.py /usr/lib/ncgx/x_plugins/
 

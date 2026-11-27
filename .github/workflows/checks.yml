@@ -23,9 +23,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Python sources and ncgx configuration parse
-        # check_ps_es is still Python 2; only the esmond freshness checks use it, and they are disabled
         run: |
-          for f in src/check_es src/check_ps src/check_ps_psched src/check_ps_report src/check_rsv \
+          for f in src/check_es src/check_ps src/check_ps_psched \
                    src/etf_ps_plugin.py config/sitecustomize.py src/*.cfg; do
             python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$f" || exit 1
           done
