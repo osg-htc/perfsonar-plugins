@@ -1,0 +1,3 @@
+#!/bin/bash
+# Active check "perfSONAR services: pscheduler diags"; the logic is in lib/diags.py
+exec python3 -m cmk_addons.plugins.perfsonar.lib.diags "$@"
