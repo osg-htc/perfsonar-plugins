@@ -40,6 +40,17 @@ def _discover(section) -> DiscoveryResult:
 agent_section_perfsonar_summary = AgentSection(name="perfsonar_summary", parse_function=_parse)
 agent_section_perfsonar_pscheduler = AgentSection(name="perfsonar_pscheduler", parse_function=_parse)
 agent_section_perfsonar_exporter = AgentSection(name="perfsonar_exporter", parse_function=_parse)
+agent_section_perfsonar_node = AgentSection(name="perfsonar_node", parse_function=_parse)
+
+
+def _discover_node(section) -> DiscoveryResult:
+    # only where node_exporter answers (perfSONAR 5.1+, service running, not blocked)
+    if (section or {}).get("ok"):
+        yield Service()
+
+
+def _discover_hardware(section_perfsonar_summary, section_perfsonar_node) -> DiscoveryResult:
+    yield Service()
 
 
 def _discover_both(section_perfsonar_summary, section_perfsonar_exporter) -> DiscoveryResult:
@@ -73,8 +84,20 @@ def _check_lookup(section) -> CheckResult:
     yield from _results(checks.check_lookup_registration(section))
 
 
-def _check_hardware(section) -> CheckResult:
-    yield from _results(checks.check_hardware(section))
+def _check_hardware(section_perfsonar_summary, section_perfsonar_node) -> CheckResult:
+    yield from _results(checks.check_hardware(section_perfsonar_summary, node=section_perfsonar_node))
+
+
+def _check_units(section) -> CheckResult:
+    yield from _results(checks.check_units(section))
+
+
+def _check_filesystems(section) -> CheckResult:
+    yield from _results(checks.check_filesystems(section))
+
+
+def _check_clock(section) -> CheckResult:
+    yield from _results(checks.check_clock(section))
 
 
 def _check_pscheduler(section) -> CheckResult:
@@ -105,8 +128,21 @@ check_plugin_perfsonar_lookup = CheckPlugin(
     sections=["perfsonar_exporter"], discovery_function=_discover_exporter, check_function=_check_lookup)
 
 check_plugin_perfsonar_hardware = CheckPlugin(
-    name="perfsonar_hardware", service_name="perfSONAR hardware check", sections=["perfsonar_summary"],
-    discovery_function=_discover, check_function=_check_hardware)
+    name="perfsonar_hardware", service_name="perfSONAR hardware check",
+    sections=["perfsonar_summary", "perfsonar_node"],
+    discovery_function=_discover_hardware, check_function=_check_hardware)
+
+check_plugin_perfsonar_units = CheckPlugin(
+    name="perfsonar_units", service_name="perfSONAR services: systemd units", sections=["perfsonar_node"],
+    discovery_function=_discover_node, check_function=_check_units)
+
+check_plugin_perfsonar_filesystems = CheckPlugin(
+    name="perfsonar_filesystems", service_name="perfSONAR host: filesystems", sections=["perfsonar_node"],
+    discovery_function=_discover_node, check_function=_check_filesystems)
+
+check_plugin_perfsonar_clock = CheckPlugin(
+    name="perfsonar_clock", service_name="perfSONAR host: clock", sections=["perfsonar_node"],
+    discovery_function=_discover_node, check_function=_check_clock)
 
 check_plugin_perfsonar_pscheduler = CheckPlugin(
     name="perfsonar_pscheduler", service_name="perfSONAR services: pscheduler", sections=["perfsonar_pscheduler"],

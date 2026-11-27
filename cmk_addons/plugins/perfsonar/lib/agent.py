@@ -42,6 +42,13 @@ EXPORTER_PATH = "/perfsonar_host_exporter/"   # perfsonar-host-metrics, perfSONA
 # only after 60 s (QMUL, TRIUMF, Nov 2026) while the pScheduler API answers in < 1 s. A healthy exporter
 # answers in about 1 s, so give it 15 s and leave the rest of the deadline to the API fallback.
 EXPORTER_TIMEOUT = 15
+# node_exporter (package prometheus-node-exporter), proxied by the toolkit's Apache. Only the
+# collectors psetf uses: about 54 KB instead of 136 KB per host.
+NODE_PATH = ("/node_exporter/metrics?collect[]=systemd&collect[]=timex&collect[]=filesystem&collect[]=meminfo"
+             "&collect[]=cpu&collect[]=dmi&collect[]=os&collect[]=netclass")
+PERFSONAR_UNITS = re.compile(r"pscheduler|owamp|twamp|psconfig|perfsonar|lsregistration|lscache|httpd|apache2|"
+                             r"opensearch|logstash|grafana|chronyd|ntpd")
+REAL_FILESYSTEMS = ("ext2", "ext3", "ext4", "xfs", "btrfs", "zfs")
 CONNECT_TIMEOUT = 15  # seconds to connect, TLS handshake included (urllib3 applies it to both); some toolkits take 5-7 s.
                       # Dead hosts must not hold up CheckMK's discovery batches (108 s per batch).
 PSCHEDULER_STATES = ("pending", "running", "overdue", "missed", "failed", "nonstart", "finished")
@@ -198,6 +205,45 @@ def exporter_section(host, address, timeout, session=requests, budget=None):
     return {"host": host, "ok": True, "url": url, "samples": samples}
 
 
+def node_section(host, address, timeout, session=requests, budget=None):
+    """node_exporter, reduced to what the checks use (the raw page is far too big for a section)."""
+    try:
+        text, url, _scheme = get(host, address, NODE_PATH, min(timeout, EXPORTER_TIMEOUT), session, ("https",), budget)
+    except FetchError as e:
+        return {"host": host, "ok": False, "error": str(e)}
+    samples = parse_prometheus(text, prefix="node_")
+    if not samples:
+        return {"host": host, "ok": False, "url": url, "error": "no node_* metrics in the answer"}
+    out = {"host": host, "ok": True, "url": url, "units": {}, "filesystems": {}, "nics": {}, "cpus": 0}
+    cpus = set()
+    for name, labels, value in samples:
+        if name == "node_systemd_unit_state":
+            unit = labels.get("name", "")
+            if value == 1 and PERFSONAR_UNITS.search(unit):
+                out["units"][unit] = labels.get("state")
+        elif name in ("node_filesystem_avail_bytes", "node_filesystem_size_bytes"):
+            if labels.get("fstype") in REAL_FILESYSTEMS:
+                fs = out["filesystems"].setdefault(labels.get("mountpoint", "?"), {"fstype": labels.get("fstype")})
+                fs["avail" if name.endswith("avail_bytes") else "size"] = value
+        elif name == "node_cpu_seconds_total":
+            cpus.add(labels.get("cpu"))
+        elif name == "node_memory_MemTotal_bytes":
+            out["mem_bytes"] = value
+        elif name == "node_timex_sync_status":
+            out["clock_synchronized"] = value
+        elif name == "node_timex_offset_seconds":
+            out["clock_offset"] = value
+        elif name == "node_dmi_info":
+            out["dmi"] = {k: labels.get(k) for k in ("sys_vendor", "product_name", "system_vendor") if labels.get(k)}
+        elif name == "node_os_info":
+            out["os"] = labels.get("pretty_name") or labels.get("name")
+        elif name in ("node_network_speed_bytes", "node_network_mtu_bytes") and labels.get("device") != "lo":
+            nic = out["nics"].setdefault(labels.get("device", "?"), {})
+            nic["speed_bytes" if name.endswith("speed_bytes") else "mtu"] = value
+    out["cpus"] = len(cpus - {None})
+    return out
+
+
 # exporter metric -> the pScheduler statistics' names (those of /pscheduler/stat and the analytics documents)
 _RUNS = {"pending": "pending", "running": "running", "overdue": "overdue", "missed": "missed", "failed": "failed",
          "nonstart": "nonstart", "finished": "finished", "on-deck": "on_deck", "cleanup": "cleanup",
@@ -293,18 +339,21 @@ def main(argv=None, out=sys.stdout, session=None):
     # summary and exporter in parallel; the pScheduler statistics come from the exporter when it has
     # them, else from /pscheduler/stat, started as soon as the exporter has answered (not after a
     # slow summary, which must not use up the pScheduler's time)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         summary_job = pool.submit(summary_section, host, address, args.timeout, session, budget)
+        node_job = pool.submit(node_section, host, address, args.timeout, session, budget)
         exporter = pool.submit(exporter_section, host, address, args.timeout, session, budget).result()
         pscheduler = pscheduler_from_exporter(host, exporter) if exporter.get("ok") else None
         pscheduler_job = None if pscheduler else \
             pool.submit(pscheduler_section, host, address, args.timeout, session, budget=budget)
         summary = summary_job.result()
         pscheduler = pscheduler or pscheduler_job.result()
+        node = node_job.result()
     summary["names"] = dns_names(host, address)
     out.write("<<<perfsonar_summary:sep(0)>>>\n%s\n" % json.dumps(summary, sort_keys=True))
     out.write("<<<perfsonar_pscheduler:sep(0)>>>\n%s\n" % json.dumps(pscheduler, sort_keys=True))
     out.write("<<<perfsonar_exporter:sep(0)>>>\n%s\n" % json.dumps(exporter, sort_keys=True))
+    out.write("<<<perfsonar_node:sep(0)>>>\n%s\n" % json.dumps(node, sort_keys=True))
     try:
         spool(args.spool, host, summary)
     except OSError as e:
