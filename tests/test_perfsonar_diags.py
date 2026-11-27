@@ -106,3 +106,31 @@ def test_an_unreachable_api_is_critical():
 def test_quick_skips_the_idle_test():
     state, output, server = run(quick=True)
     assert state == diags.OK and "no idle test" in output and not server.posted
+
+
+def test_pick_address_prefers_ipv6_and_skips_closed_addresses(monkeypatch):
+    infos = [(diags.socket.AF_INET, 1, 6, "", ("192.0.2.10", 443)),
+             (diags.socket.AF_INET6, 1, 6, "", ("2001:db8::10", 443, 0, 0))]
+    monkeypatch.setattr(diags.socket, "getaddrinfo", lambda *a, **k: infos)
+    tried = []
+
+    class Sock(object):
+        def __init__(self, family, kind):
+            self.family = family
+
+        def settimeout(self, t):
+            pass
+
+        def connect(self, sockaddr):
+            tried.append(sockaddr[0])
+            if sockaddr[0] == closed[0]:
+                raise OSError("filtered")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(diags.socket, "socket", Sock)
+    closed = ["none"]
+    assert diags.pick_address(HOST) == "2001:db8::10" and tried == ["2001:db8::10"]
+    closed[0], tried[:] = "2001:db8::10", []
+    assert diags.pick_address(HOST) == "192.0.2.10" and tried == ["2001:db8::10", "192.0.2.10"]

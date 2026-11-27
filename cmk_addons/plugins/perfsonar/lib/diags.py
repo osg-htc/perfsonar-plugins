@@ -18,13 +18,14 @@ Nagios plugin output: one status line with performance data, details below; exit
 import argparse
 import datetime
 import json
+import socket
 import sys
 import time
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from cmk_addons.plugins.perfsonar.lib.agent import make_session, target
+from cmk_addons.plugins.perfsonar.lib.agent import make_session
 
 OK, WARN, CRIT, UNKNOWN = 0, 1, 2, 3
 STATE_NAMES = ("OK", "WARNING", "CRITICAL", "UNKNOWN")
@@ -46,7 +47,9 @@ class Failed(Exception):
 
 
 class API(object):
-    """GETs and POSTs to one host's pScheduler API over HTTPS, IPv4 address with the host name as Host."""
+    """GETs and POSTs to one host's pScheduler API over HTTPS.
+
+    To the address chosen by pick_address (see there), with the host name as Host header."""
 
     def __init__(self, host, address, session, deadline, timeout=30):
         self.host, self.address, self.session, self.deadline, self.timeout = host, address, session, deadline, timeout
@@ -73,6 +76,36 @@ class API(object):
         r = self.session.post(self._url(path), data=json.dumps(body), timeout=self._timeout(), verify=False,
                               headers={"Host": self.host, "Content-Type": "application/json"})
         return r.status_code, _json(r)
+
+
+def pick_address(host, port=443, timeout=5):
+    """The first of the host's addresses that accepts a connection on `port`, IPv6 first.
+
+    troubleshoot connects by name, and on the dual-stack psetf host the resolver prefers IPv6, so a
+    host whose 443 is filtered on IPv4 still answers there (psonar7.fnal.gov, Nov 2026). In the
+    CheckMK container IPv6 goes through NAT from a private address, and the resolver then puts IPv4
+    first, costing a timeout per request; so pick once, IPv6 first, and stay on that address.
+    Falls back to the name itself when nothing connects (the request then reports the error)."""
+    try:
+        infos = socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError):
+        return host
+    ordered = [i for i in infos if i[0] == socket.AF_INET6] + [i for i in infos if i[0] == socket.AF_INET]
+    seen = set()
+    for family, _t, _p, _c, sockaddr in ordered:
+        if sockaddr[0] in seen:
+            continue
+        seen.add(sockaddr[0])
+        s = socket.socket(family, socket.SOCK_STREAM)
+        s.settimeout(timeout)
+        try:
+            s.connect(sockaddr)
+            return sockaddr[0]
+        except OSError:
+            continue
+        finally:
+            s.close()
+    return host
 
 
 def _json(r):
@@ -199,7 +232,7 @@ def check(api, quick=False, notes=None, perf=None, sleep=time.sleep):
 def run(host, timeout=30, limit=240, quick=False, session=None, address=None):
     """(exit code, output) for one host."""
     host = host.strip().lower()
-    api = API(host, address or target(host), session or make_session(), time.time() + limit, timeout)
+    api = API(host, address or pick_address(host), session or make_session(), time.time() + limit, timeout)
     notes, perf = [], []
     try:
         state, summary = check(api, quick, notes, perf)
