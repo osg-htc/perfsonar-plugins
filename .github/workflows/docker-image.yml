@@ -8,6 +8,9 @@ name: Docker
 on:
   push:
     tags: [ '*.*.*' ]
+  # PRs: build the image to prove it still builds; nothing is pushed or signed (see the if: guards below)
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       name:
@@ -23,10 +26,17 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 
+# a new push to a PR cancels that PR's earlier build; tag and manual builds always run to the end
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
 
     runs-on: ubuntu-latest
+    # a stalled mirror download would otherwise hold the job for GitHub's 6-hour default
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
