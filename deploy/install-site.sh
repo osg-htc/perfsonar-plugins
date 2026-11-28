@@ -11,6 +11,11 @@ set -euo pipefail
 CONTAINER=${1:?usage: install-site.sh CONTAINER SITE MKP}
 SITE=${2:?usage: install-site.sh CONTAINER SITE MKP}
 MKP=${3:?usage: install-site.sh CONTAINER SITE MKP}
+# The site's cron jobs (the exporter below, logrotate, CheckMK's own) run only if cron's PAM session
+# succeeds. The image requires pam_loginuid, which cannot set the login uid in an unprivileged
+# container, so cron silently ran no job at all (staging, Nov 2026). This changes the container, not
+# the site volume: run this script again after recreating the container.
+podman exec "$CONTAINER" sed -i 's/^session[[:space:]]\+required[[:space:]]\+pam_loginuid\.so/session    optional     pam_loginuid.so/' /etc/pam.d/cron
 podman cp "$MKP" "$CONTAINER:/tmp/psetf_perfsonar.mkp"
 podman exec -i "$CONTAINER" su - "$SITE" <<'SITE_SH'
 set -euo pipefail

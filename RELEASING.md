@@ -96,6 +96,7 @@ The same release also carries psetf for CheckMK 2.5. It has three parts.
 - **`psetf_perfsonar-X.Y.Z.mkp`:** a CheckMK extension package, attached to the GitHub release by the MKP workflow. It contains `cmk_addons/plugins/perfsonar`: the special agent, the checks, the pScheduler diags active check and the analytics exporter. To build one locally, run `packaging/build-mkp.sh X.Y.Z`; it needs podman or docker.
 - **`psetf/`:** discovery and the site rules. Both run on the container host and talk to the site's REST API: `python3 -m psetf.discovery`, `python3 -m psetf.site_setup`.
 - **`deploy/install-site.sh`:** installs an MKP into a site running in a container, and sets the site-level pieces an MKP cannot carry:
+  - cron's PAM setting in the container (`pam_loginuid` optional), without which cron runs none of the site's jobs;
   - the exporter cron file;
   - `etc/psetf/exporter.json`, mode `file` unless already configured;
   - Nagios `service_check_timeout` of 300 s, for the 240 s diags check;
@@ -104,6 +105,8 @@ The same release also carries psetf for CheckMK 2.5. It has three parts.
   - reloads of Apache and the core.
 
   It is idempotent: the same version is left alone, and an older enabled version is disabled.
+
+  **Run it again after recreating the container,** even with the same version: the PAM setting lives in the container, not in the site volume.
 
 **The container needs** `cap_add: [NET_RAW]` (for `check_icmp`) and a process limit above podman's default of 2048, for example `pids_limit: 8192`. Each special agent run takes about 8 processes and threads. With 258 hosts running at once, staging ran out on 27 Nov 2026 (`can't start new thread`). An existing container can be changed without a recreate: `podman update --pids-limit 8192 CONTAINER`.
 
