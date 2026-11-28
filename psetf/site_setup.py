@@ -48,6 +48,14 @@ RULES = [
      "{'limit': 240.0}", None),
     ("extra_service_conf:check_interval", "psetf: pScheduler diagnostics once a day",
      "1440.0", {"service_description": {"match_on": ["perfSONAR services: pscheduler diags$"], "operator": "one_of"}}),
+    # The one-minute network checks change state only after 3 failed attempts in a row (retried every
+    # minute): with one attempt, a lossy path made every flip a hard alert (about 1000 a day from
+    # PING IPv6 on 4 hosts, Nov 2026). The ETF psetf checked its port services every 15 minutes with
+    # 3 to 5 attempts.
+    ("extra_service_conf:max_check_attempts", "psetf: 3 attempts before a state change for the one-minute network checks",
+     "3", {"service_description": {"match_on": ["PING$", "PING IPv6$", "perfSONAR services: owamp$",
+                                                "perfSONAR services: owamp IPv6$", "perfSONAR services: web/https IPv6$"],
+                                   "operator": "one_of"}}),
     ("custom_checks", "psetf: owamp port on latency hosts",
      repr({"service_description": "perfSONAR services: owamp",
            "command_line": "check_tcp -H $HOSTADDRESS$ -p 861"}),
